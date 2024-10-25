@@ -4,7 +4,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from helpers.networks import UnifiedModel, get_network
+from helpers.networks import SourceModel, TargetModel, get_network
 from helpers.utils import fgsm_attack, get_dataset, make_multichannel_input, plot_images, setup_seed
 from torch.autograd import Variable
 import random
@@ -124,11 +124,7 @@ def train_model(
         model_in.eval()
 
     criterion = nn.CrossEntropyLoss()
-    # if forward_fn == "linear":
-    #     #! set the layer_operations for the model
-    #     # import pdb; pdb.set_trace()
-    #     # model_in.linear_layers[1][1].weight.sum() = tensor(-0.4745, device='cuda:0', grad_fn=<SumBackward0>)
-    #     model_in._layer_operations(model_in.imported_model)
+
         
     if subset_only is None:
         train_optimizer = optimizer_in(model_in.imported_model.parameters(), lr=lr)
@@ -329,7 +325,9 @@ def _pgd_blackbox(
                 step_size=0.003,
                 random=True,) -> Tuple[int, int]:
     # [20,30,35,40,45,50,52]
-    layer = 40
+    layer = 50
+    #! make sure that for the target model, all defenses are turned on
+    # model_source.fix_seed = True
     out = model_target(X)
     err = (out.data.max(1)[1] != y.data).float().sum()
     X_pgd = Variable(X.data, requires_grad=True)
@@ -341,7 +339,7 @@ def _pgd_blackbox(
         opt = optim.SGD([X_pgd], lr=1e-3)
         opt.zero_grad()
         with torch.enable_grad():
-            # loss = nn.CrossEntropyLoss()(model_source.predict_from_layer(X_pgd, layer), y)
+            # loss = nn.CrossEntropyLoss()(model_source.get_logits_from_layer(X_pgd, layer), y)
             loss = nn.CrossEntropyLoss()(model_source.get_logits_from_several_layers(X_pgd, layer), y)
         loss.backward()
         eta = step_size * X_pgd.grad.data.sign()
@@ -350,8 +348,8 @@ def _pgd_blackbox(
         X_pgd = Variable(X.data + eta, requires_grad=True)
         X_pgd = Variable(torch.clamp(X_pgd, 0, 1.0), requires_grad=True)
     err_pgd_on_source = (model_source.get_logits_from_several_layers(X_pgd, layer).data.max(1)[1] != y.data).float().sum()
-
-    # err_pgd_on_source = (model_source.predict_from_layer(X_pgd, layer).data.max(1)[1] != y.data).float().sum()
+    # err_pgd_on_source = (model_source.get_logits_from_layer(X_pgd, layer).data.max(1)[1] != y.data).float().sum()
+    
     err_pgd_on_target = (model_target(X_pgd).data.max(1)[1] != y.data).float().sum()
     print(f'clean_err={err.item()}, adv_err_on_source={err_pgd_on_source.item()}, adv_err_on_target={err_pgd_on_target.item()}')
     return err, err_pgd_on_source, err_pgd_on_target
@@ -416,7 +414,7 @@ def eval_adv_test_whitebox(model, device, data_dir):
             break
     print(f"clean accuracy: {(1 - natural_err_total / total):.2%}, robust accuracy: {(1 - robust_err_total / total):.2%}")
 
-def eval_adv_test_blackbox(model_target, device, data_dir):
+def eval_adv_test_blackbox(model_target, device, data_dir, images_test_np, labels_test_np, layer_i=40):
     """
     evaluate model by black-box attack
     """
@@ -424,9 +422,24 @@ def eval_adv_test_blackbox(model_target, device, data_dir):
     testset = torchvision.datasets.CIFAR100(root=data_dir, train=False, download=True, transform=transform_test)
     test_loader = torch.utils.data.DataLoader(testset, batch_size=32, shuffle=False, num_workers=2)
     
-    model_source = copy.deepcopy(model_target)
+
+    model_source = SourceModel(copy.deepcopy(model_target.imported_model), model_target.multichannel_fn, classes=100).to("cuda")
+    model_source.layer_operations = copy.deepcopy(model_target.layer_operations)
+    model_source.linear_layers = copy.deepcopy(model_target.linear_layers)
+    model_source.fix_seed = False
+    
     model_target.eval()
     model_source.eval()
+    
+    # test_hits,test_count,_ = eval_model(model_source, images_test_np, labels_test_np, forward_fn="ensemble")
+    # print(f"source model test={test_hits}/{test_count}={test_hits/test_count}")
+    # test_hits,test_count,_ = eval_model(model_target, images_test_np, labels_test_np, forward_fn="ensemble")
+    # print(f"target model test={test_hits}/{test_count}={test_hits/test_count}")
+    # import pdb; pdb.set_trace()
+    
+    # test the accuracy of the target model and source model
+    
+
     robust_err_total_source = 0
     robust_err_total_target = 0
     natural_err_total = 0
@@ -474,7 +487,7 @@ def main():
     network.conv1 = nn.Conv2d(N * in_planes, planes, kernel_size=7, stride=stride, padding=3, bias=False)
     network.fc = nn.Linear(2048, classes)
     
-    model = UnifiedModel(network, make_multichannel_input, classes=classes, resolutions=resolutions).to("cuda")
+    model = TargetModel(network, make_multichannel_input, classes=classes, resolutions=resolutions).to("cuda")
     
 
     # 2. Train the model
@@ -556,8 +569,8 @@ def main():
         print(f"Self-ensemble test acc = {self_ensemble_test_acc}")
         print("\n---------------------------------------------\n")
 
-    eval_adv_test_whitebox(model, device="cuda", data_dir=data_dir)
-    # eval_adv_test_blackbox(model, device="cuda", data_dir=data_dir)
+    # eval_adv_test_whitebox(model, device="cuda", data_dir=data_dir)
+    eval_adv_test_blackbox(model, device="cuda", data_dir=data_dir, images_test_np=images_test_np, labels_test_np=labels_test_np)
     
     if False:
     

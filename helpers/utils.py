@@ -92,7 +92,8 @@ def apply_transformations(
     down_noise: float = 0.0, 
     up_noise: float = 0.0, 
     contrast: torch.Tensor = 1.0, 
-    color_amount: torch.Tensor = 1.0
+    color_amount: torch.Tensor = 1.0,
+    fix_seed: bool = False
 ) -> torch.Tensor:
 
     # # for MNIST alone
@@ -121,14 +122,14 @@ def apply_transformations(
     images = F.interpolate(images, size=(down_res,down_res), mode='bicubic')
 
     # low res noise
-    noise = down_noise * custom_rand((images.shape[0],3,down_res,down_res)).to("cuda")
+    noise = down_noise * custom_rand((images.shape[0],3,down_res,down_res), fix_seed).to("cuda")
     images = images + noise
 
     # increase the resolution
     images = F.interpolate(images, size=(up_res,up_res), mode='bicubic')
 
     # high res noise
-    noise = up_noise * custom_rand((images.shape[0],3,up_res,up_res)).to("cuda")
+    noise = up_noise * custom_rand((images.shape[0],3,up_res,up_res), fix_seed).to("cuda")
     images = images + noise
 
     # clipping to the right range of values
@@ -137,15 +138,17 @@ def apply_transformations(
     return images
 
 
-def custom_rand(size: int) -> torch.Tensor:
-    # setup_seed(0)
+def custom_rand(size: int, fix_seed: bool = False) -> torch.Tensor:
+    if fix_seed:
+        setup_seed(0)
     return torch.Tensor(
         np.random.rand(*size)
     ).to("cuda")
 
 
-def custom_choices(items: np.ndarray, tensor: torch.Tensor) -> torch.Tensor:
-    # setup_seed(0)
+def custom_choices(items: np.ndarray, tensor: torch.Tensor, fix_seed: bool = False) -> torch.Tensor:
+    if fix_seed:
+        setup_seed(0)
     return np.random.choice(items,(len(tensor)))
 
 
@@ -195,24 +198,18 @@ def make_multichannel_input(images: torch.Tensor,
                             down_noise: float = 0.2,
                             up_noise: float = 0.2,
                             shuffle_image_versions_randomly: bool = False,
+                            fix_seed: bool = False
                             ):
 
     all_channels = []
 
     for i, down_res in enumerate(resolutions):
-        jits_x = custom_choices(range(-jit_size,jit_size+1), images) # x-shift
-        jits_y = custom_choices(range(-jit_size,jit_size+1), images) # y-shift
-        contrasts = custom_choices(np.linspace(0.7,1.5,100), images) # change in contrast
+        jits_x = custom_choices(range(-jit_size,jit_size+1), images, fix_seed)
+        jits_y = custom_choices(range(-jit_size,jit_size+1), images, fix_seed)
+        contrasts = custom_choices(np.linspace(0.7,1.5,100), images, fix_seed)
         #? color_amounts = contrasts??
-        color_amounts  = custom_choices(np.linspace(0.5,1.0,100), images) # change in color amount
-        # import pdb; pdb.set_trace()
-        
-        
-        # jits_x = custom_choices(range(-jit_size,jit_size+1), images+i) # x-shift
-        # jits_y = custom_choices(range(-jit_size,jit_size+1), 51*images+7*i+125*r) # y-shift
-        # contrasts = custom_choices(np.linspace(0.7,1.5,100), 7+3*images+9*i+5*r) # change in contrast
-        # #? color_amounts = contrasts??
-        # color_amounts = contrasts = custom_choices(np.linspace(0.5,1.0,100), 5+7*images+8*i+2*r) # change in color amount
+        color_amounts  = custom_choices(np.linspace(0.5,1.0,100), images, fix_seed)
+
 
         images_now = apply_transformations(
             images,

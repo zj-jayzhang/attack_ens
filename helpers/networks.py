@@ -24,13 +24,13 @@ def get_network() -> nn.Module:
 
 
 
-class UnifiedModel(nn.Module):
+class TargetModel(nn.Module):
     def __init__(self, imported_model, multichannel_fn, classes=10, resolutions=[32, 16, 8, 4]):
-        super(UnifiedModel, self).__init__()
+        super(TargetModel, self).__init__()
         self.imported_model = imported_model
         self.multichannel_fn = multichannel_fn
         self.classes = classes
-
+        self.fix_seed = False
 
 
         # Define all layer dimensions
@@ -76,7 +76,7 @@ class UnifiedModel(nn.Module):
 
     def prepare_input(self, x):
         """Prepare input by applying multichannel function, resizing, and normalizing."""
-        x = self.multichannel_fn(x)
+        x = self.multichannel_fn(x, fix_seed=self.fix_seed)
         x = F.interpolate(x, size=(224, 224), mode='bicubic')
         x = torchvision.transforms.Normalize(
             mean=[0.485, 0.456, 0.406] * (x.shape[1] // 3),
@@ -104,6 +104,7 @@ class UnifiedModel(nn.Module):
 
     def predict_from_several_layers(self, x, layers):
         """Predict from several layers."""
+        # import pdb; pdb.set_trace()
         x = self.prepare_input(x)
         outputs = dict()
         outputs[0] = self.linear_layers[0](x.reshape([x.shape[0], -1]))
@@ -118,19 +119,83 @@ class UnifiedModel(nn.Module):
 
         return outputs
     
-    def get_logits_from_several_layers(self, x, layers):
+    def forward(self, x):
+        """Main forward pass, combining multiple layer predictions."""
         all_logits = self.predict_from_several_layers(x, [l - 1 for l in [0, 1, 5, 10, 20, 30, 35, 40, 45, 50, 52][1:]])
         # Add prediction from the backbone model itself
         all_logits[54] = self.imported_model(self.prepare_input(x))
 
         # Stack logits from specific layers, [20,30,35,40,45,50,52]
         all_logits = torch.stack([all_logits[l] for l in [20, 30, 35, 40, 45, 50, 52, 54]], dim=1)
-        
-        return torch.mean(all_logits, dim=1)
 
+        # Normalize and extract logits
+        all_logits = all_logits - torch.max(all_logits, dim=2, keepdim=True).values
+        all_logits = all_logits - torch.max(all_logits, dim=1, keepdim=True).values
+        logits = torch.topk(all_logits, 3, dim=1).values[:, 2]
+
+        return logits   # [bs, 100]
+    
+    def forward_original(self, x):
+        x = self.multichannel_fn(x)
+        x = F.interpolate(x, size=(224, 224), mode='bicubic')
+        x = torchvision.transforms.Normalize(
+            mean=[0.485, 0.456, 0.406] * (x.shape[1] // 3),
+            std=[0.229, 0.224, 0.225] * (x.shape[1] // 3)
+        )(x)
+        x = self.imported_model(x)
+        return x
+
+
+class SourceModel(TargetModel):
+    def __init__(self, imported_model, multichannel_fn, classes=10, resolutions=[32, 16, 8, 4]):
+        super(SourceModel, self).__init__(imported_model, multichannel_fn, classes, resolutions)
+        self.fix_seed = True
+        
+    def get_logits_from_layer(self, x, l):
+        """Predict from a specific layer."""
+        x = self.forward_until(x, l)
+        x = x.reshape([x.shape[0], -1])
+        return self.linear_layers[l](x)
+    
+    def get_logits_from_several_layers(self, x, layers):
+        # ensemble the logits from several layers sevearl times
+        for ens in range(1):
+            all_logits = self.predict_from_several_layers(x, [l - 1 for l in [0, 1, 5, 10, 20, 30, 35, 40, 45, 50, 52][1:]])
+            # Add prediction from the backbone model itself
+            all_logits[54] = self.imported_model(self.prepare_input(x))
+
+            # Stack logits from specific layers, [20,30,35,40,45,50,52]
+            all_logits = torch.stack([all_logits[l] for l in [20, 30, 35, 40, 45, 50, 52, 54]], dim=1)
+            
+            if ens == 0:
+                all_logits_ens = all_logits
+            else:
+                all_logits_ens += all_logits
+            del all_logits
+            torch.cuda.empty_cache()
+            
+            
+        return torch.mean(all_logits_ens, dim=1)
+        # Normalize and extract logits
+        # all_logits = all_logits_ens 
+        # all_logits = all_logits - torch.max(all_logits, dim=2, keepdim=True).values
+        # all_logits = all_logits - torch.max(all_logits, dim=1, keepdim=True).values
+        # logits = torch.topk(all_logits, 3, dim=1).values[:, 2]
+        # return logits
+            
+            
+        # all_logits = self.predict_from_several_layers(x, [l - 1 for l in [0, 1, 5, 10, 20, 30, 35, 40, 45, 50, 52][1:]])
+        # # Add prediction from the backbone model itself
+        # all_logits[54] = self.imported_model(self.prepare_input(x))
+
+        # # Stack logits from specific layers, [20,30,35,40,45,50,52]
+        # all_logits = torch.stack([all_logits[l] for l in [20, 30, 35, 40, 45, 50, 52, 54]], dim=1)
+        
+        # return torch.mean(all_logits, dim=1)
 
     def forward(self, x):
         #! debug if we turn ensemble off
+        import pdb; pdb.set_trace()
         debug = False
         if debug:
             return self.forward_original(x)
@@ -154,15 +219,3 @@ class UnifiedModel(nn.Module):
                 logits = torch.mean(all_logits, dim=1)
 
             return logits   # [bs, 100]
-    
-    def forward_original(self, x):
-        x = self.multichannel_fn(x)
-        x = F.interpolate(x, size=(224, 224), mode='bicubic')
-        x = torchvision.transforms.Normalize(
-            mean=[0.485, 0.456, 0.406] * (x.shape[1] // 3),
-            std=[0.229, 0.224, 0.225] * (x.shape[1] // 3)
-        )(x)
-        x = self.imported_model(x)
-        return x
-
-

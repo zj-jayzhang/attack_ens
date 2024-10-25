@@ -101,3 +101,32 @@ baseline: clean accuracy: 66.31%, robust accuracy: 56.05%
 ```
 clean accuracy: 67.19%, robust accuracy on source: 30.08%, robust accuracy on target: 30.08%
 ```
+no, actually it's clean accuracy: 67.48%, robust accuracy on source: 1.27%, robust accuracy on target: 46.58%
+
+
+# exp.2
+
+we do class inheritance, now we have a class `TargetModel` and `SourceModel`, the first one turns on all defenses mechanisms, we use the second one to attack the model.
+
+baseline: clean accuracy: 66.31%, robust accuracy: 56.05%
+
+1. Setting: 1000 examples, fix_seed=True, turn off cross-max, ensemble on
+clean accuracy: 67.48%, robust accuracy on source: 15.43%, robust accuracy on target: 49.51%
+
+2. Setting: 1000 examples, fix_seed=False, turn on cross-max, ensemble on 
+clean accuracy: 67.19%, robust accuracy on source: 34.28%, robust accuracy on target: 35.35%
+clean accuracy: 67.19%, robust accuracy on source: 34.18%, robust accuracy on target: 35.35%
+clean accuracy: 67.19%, robust accuracy on source: 34.18%, robust accuracy on target: 35.35%
+==> do not fix seed, it is better for transfer attack???
+btw, if I turn on cross-max for source model:
+clean accuracy: 67.19%, robust accuracy on source: 54.88%, robust accuracy on target: 58.40%
+==> which means averaging logits is strong enough to break this defense mechanism.
+
+
+3. if I do 2, and ensemble it twice,
+clean accuracy: 67.19%, robust accuracy on source: 41.99%, robust accuracy on target: 41.02%
+
+4. what if I only use the 20-layer or 30-layer model?
+20: clean accuracy: 67.19%, robust accuracy on source: 21.48%, robust accuracy on target: 52.93%
+30: clean accuracy: 67.19%, robust accuracy on source: 29.30%, robust accuracy on target: 47.85%
+50: clean accuracy: 67.19%, robust accuracy on source: 39.26%, robust accuracy on target: 50.29%
