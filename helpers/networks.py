@@ -158,40 +158,17 @@ class SourceModel(TargetModel):
         return self.linear_layers[l](x)
     
     def get_logits_from_several_layers(self, x, layers):
-        # ensemble the logits from several layers sevearl times
-        for ens in range(1):
-            all_logits = self.predict_from_several_layers(x, [l - 1 for l in [0, 1, 5, 10, 20, 30, 35, 40, 45, 50, 52][1:]])
-            # Add prediction from the backbone model itself
-            all_logits[54] = self.imported_model(self.prepare_input(x))
 
-            # Stack logits from specific layers, [20,30,35,40,45,50,52]
-            all_logits = torch.stack([all_logits[l] for l in [20, 30, 35, 40, 45, 50, 52, 54]], dim=1)
-            
-            if ens == 0:
-                all_logits_ens = all_logits
-            else:
-                all_logits_ens += all_logits
-            del all_logits
-            torch.cuda.empty_cache()
-            
-            
-        return torch.mean(all_logits_ens, dim=1)
-        # Normalize and extract logits
-        # all_logits = all_logits_ens 
-        # all_logits = all_logits - torch.max(all_logits, dim=2, keepdim=True).values
-        # all_logits = all_logits - torch.max(all_logits, dim=1, keepdim=True).values
-        # logits = torch.topk(all_logits, 3, dim=1).values[:, 2]
-        # return logits
-            
-            
-        # all_logits = self.predict_from_several_layers(x, [l - 1 for l in [0, 1, 5, 10, 20, 30, 35, 40, 45, 50, 52][1:]])
-        # # Add prediction from the backbone model itself
-        # all_logits[54] = self.imported_model(self.prepare_input(x))
+        all_logits = self.predict_from_several_layers(x, [l - 1 for l in [0, 1, 5, 10, 20, 30, 35, 40, 45, 50, 52][1:]])
+        # Add prediction from the backbone model itself
+        all_logits[54] = self.imported_model(self.prepare_input(x))
 
-        # # Stack logits from specific layers, [20,30,35,40,45,50,52]
-        # all_logits = torch.stack([all_logits[l] for l in [20, 30, 35, 40, 45, 50, 52, 54]], dim=1)
+        # Stack logits from specific layers, [20,30,35,40,45,50,52]
+        all_logits = torch.stack([all_logits[l] for l in [20, 30, 35, 40, 45, 50, 52, 54]], dim=1)
         
-        # return torch.mean(all_logits, dim=1)
+
+        return torch.mean(all_logits, dim=1)
+
 
     def forward(self, x):
         #! debug if we turn ensemble off

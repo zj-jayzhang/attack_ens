@@ -130,3 +130,83 @@ clean accuracy: 67.19%, robust accuracy on source: 41.99%, robust accuracy on ta
 20: clean accuracy: 67.19%, robust accuracy on source: 21.48%, robust accuracy on target: 52.93%
 30: clean accuracy: 67.19%, robust accuracy on source: 29.30%, robust accuracy on target: 47.85%
 50: clean accuracy: 67.19%, robust accuracy on source: 39.26%, robust accuracy on target: 50.29%
+==> it's better to use ensemble model
+
+one more baseline: clean accuracy: 67.68%, robust accuracy on source: 34.77%, robust accuracy on target: 36.91
+
+> based on this baseline, we try eot:
+1. 2 aug: clean accuracy: 68.65%, robust accuracy on source: 43.16%, robust accuracy on target: 45.80%
+2. 2 raw: clean accuracy: 68.65%, robust accuracy on source: 30.96%, robust accuracy on target: 31.84%
+3. 4 raw: clean accuracy: 69.00%, robust accuracy on source: 21.70%, robust accuracy on target: 32.30%
+4. 6 raw: clean accuracy: 67.50%, robust accuracy on source: 20.90%, robust accuracy on target: 29.30%
+5: 15 raw: clean accuracy: 69.70%, robust accuracy on source: 13.80%, robust accuracy on target: 31.00%
+
+
+> pgd 40 seems not working well?
+1 aug, clean accuracy: 69.10%, robust accuracy on source: 20.00%, robust accuracy on target: 37.70%
+
+| + early stopping not working 
+#steps:40, #eot: 2 | Nat Err: 317.0 | Rob_Source Err: 603.0 | Rob_Target Err: 333.0 | Total: 1000 
+:
+clean accuracy: 68.30%, robust accuracy on source: 39.70%, robust accuracy on target: 66.7
+
+> redo it, 6 raw, pgd20, no early stopping
+
+
+# exp.3
+## test if cross-max is important
+| a: for target model, fix seed, transfer attack
+1. for source model, do not fix seed: 
+
+    clean accuracy: 68.65%, robust accuracy on source: 35.35%, robust accuracy on target: 36.72%
+
+2. for target model, fix seed, for source model, fix seed:
+
+    clean accuracy: 68.65%, robust accuracy on source: 15.92%, robust accuracy on target: 16.41%
+
+=> for transfer attack, cross-max still works a bit.
+
+
+| a: for target model, fix seed, direct attack
+clean accuracy: 68.65%, robust accuracy: 41.70%
+
+=> seems the ensemble model works well for direct attack??
+
+double check: what if not fix seed for target model?
+
+| clean accuracy: 68.55%, robust accuracy: 57.91%
+=> this seems right
+
+
+## double check the best result we got
+| 1 aug, pgd20, bs=32
+clean accuracy: 68.65%, robust accuracy on source: 36.13%, robust accuracy on target: 37.70%
+
+| 1 aug, pgd20, bs=48
+clean accuracy: 68.55%, robust accuracy on source: 36.21%, robust accuracy on target: 37.90%
+
+| 1 aug, pgd20, bs=1
+
+#steps:20, #eot: 1 | Nat Err: 218.0 | Rob_Source Err: 519.0 | Rob_Target Err: 312.0 | Total: 692
+=> it's weird, bs=1 seems not working well. why??
+
+model.eval() ==> 
+
+#steps:20, #eot: 1 | Nat Err: 33.0 | Rob_Source Err: 83.0 | Rob_Target Err: 46.0 | Total: 124
+=> doesn't work well, seems the model is already in eval mode.
+
+| 1 aug, pgd20, bs=2
+
+=> doesn't work well
+
+| 1 aug, pgd40, bs=48
+clean accuracy: 68.25%, robust accuracy on source: 25.60%, robust accuracy on target: 25.99%
+
+| 1 aug, pgd60, bs=48
+clean accuracy: 68.85%, robust accuracy on source: 22.42%, robust accuracy on target: 23.21%
+
+| 1 aug, pgd60, bs=16
+clean accuracy: 70.14%, robust accuracy on source: 21.83%, robust accuracy on target: 24.01%
+
+| 1 aug, pgd100, 
+clean accuracy: 69.35%, robust accuracy on source: 20.24%, robust accuracy on target: 21.33%

@@ -11,6 +11,7 @@ import random
 import time
 import copy
 import torchvision
+from torchvision import transforms
 import matplotlib.pyplot as plt
 from contextlib import contextmanager
 from tqdm import tqdm
@@ -233,14 +234,6 @@ def train_model(
 
 
 
-
-
-
-
-
-    
-
-
 def benchmark(
     model: Union[nn.Module, Sequence[nn.Module]],
     n_examples: int = 10000,
@@ -276,7 +269,7 @@ def benchmark(
 
     dataset_: BenchmarkDataset = BenchmarkDataset(dataset)
     threat_model_: ThreatModel = ThreatModel(threat_model)
-    model = model.to(device)
+    model = model.cuda()
 
     prepr = get_preprocessing(dataset_, threat_model_, model_name,
                             preprocessing)
@@ -320,14 +313,16 @@ def _pgd_blackbox(
                 model_source,
                 X,
                 y,
-                epsilon=0.031,
+                epsilon=0.031,   
                 num_steps=20,
-                step_size=0.003,
-                random=True,) -> Tuple[int, int]:
+                step_size=0.003,  # 0.003
+                random=True,
+                num_eot=1,) -> Tuple[int, int]:
     # [20,30,35,40,45,50,52]
+    model_source.eval()
+    model_target.eval()
     layer = 50
     #! make sure that for the target model, all defenses are turned on
-    # model_source.fix_seed = True
     out = model_target(X)
     err = (out.data.max(1)[1] != y.data).float().sum()
     X_pgd = Variable(X.data, requires_grad=True)
@@ -335,23 +330,39 @@ def _pgd_blackbox(
         random_noise = torch.FloatTensor(*X_pgd.shape).uniform_(-epsilon, epsilon).cuda()
         X_pgd = Variable(X_pgd.data + random_noise, requires_grad=True)
 
+    def random_transform(image):
+        transform = transforms.Compose([
+            transforms.RandomAffine(degrees=10, translate=(0.1, 0.1), scale=(0.9, 1.1)),  
+            transforms.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1),  
+            transforms.GaussianBlur(kernel_size=3)  
+        ])
+        return transform(image)
+
     for _ in range(num_steps):
         opt = optim.SGD([X_pgd], lr=1e-3)
         opt.zero_grad()
         with torch.enable_grad():
-            # loss = nn.CrossEntropyLoss()(model_source.get_logits_from_layer(X_pgd, layer), y)
-            loss = nn.CrossEntropyLoss()(model_source.get_logits_from_several_layers(X_pgd, layer), y)
+            loss = 0
+            for i in range(num_eot):
+                # x_transformed = random_transform(X_pgd)
+                x_transformed = X_pgd
+                loss += nn.CrossEntropyLoss()(model_source.get_logits_from_several_layers(x_transformed, layer), y)
+            loss /= num_eot
+                
         loss.backward()
         eta = step_size * X_pgd.grad.data.sign()
         X_pgd = Variable(X_pgd.data + eta, requires_grad=True)
         eta = torch.clamp(X_pgd.data - X.data, -epsilon, epsilon)
         X_pgd = Variable(X.data + eta, requires_grad=True)
         X_pgd = Variable(torch.clamp(X_pgd, 0, 1.0), requires_grad=True)
+        
+        
+        
     err_pgd_on_source = (model_source.get_logits_from_several_layers(X_pgd, layer).data.max(1)[1] != y.data).float().sum()
     # err_pgd_on_source = (model_source.get_logits_from_layer(X_pgd, layer).data.max(1)[1] != y.data).float().sum()
     
     err_pgd_on_target = (model_target(X_pgd).data.max(1)[1] != y.data).float().sum()
-    print(f'clean_err={err.item()}, adv_err_on_source={err_pgd_on_source.item()}, adv_err_on_target={err_pgd_on_target.item()}')
+    # print(f'clean_err={err.item()}, adv_err_on_source={err_pgd_on_source.item()}, adv_err_on_target={err_pgd_on_target.item()}')
     return err, err_pgd_on_source, err_pgd_on_target
 
 
@@ -385,7 +396,7 @@ def _pgd_whitebox(
         X_pgd = Variable(torch.clamp(X_pgd, 0, 1.0), requires_grad=True)
     err_pgd = (model(X_pgd).data.max(1)[1] != y.data).float().sum()
     
-    print(f'clean_err={err.item()}, adv_err={err_pgd.item()}')
+    # print(f'clean_err={err.item()}, adv_err={err_pgd.item()}')
     return err, err_pgd
 
 
@@ -396,20 +407,29 @@ def eval_adv_test_whitebox(model, device, data_dir):
     transform_test = torchvision.transforms.Compose([torchvision.transforms.ToTensor(),])
     testset = torchvision.datasets.CIFAR100(root=data_dir, train=False, download=True, transform=transform_test)
     test_loader = torch.utils.data.DataLoader(testset, batch_size=32, shuffle=False, num_workers=2)
-
+    # model.fix_seed = True
 
     model.eval()
     robust_err_total = 0
     natural_err_total = 0
     total = 0
-    for data, target in test_loader:
-        data, target = data.to(device), target.to(device)
+    num_eot = 1
+    pgd_steps = 20
+    
+    pbar = tqdm(test_loader, ncols=100)
+    for data, target in pbar:
+        data, target = data.cuda(), target.cuda()
         # pgd attack
         X, y = Variable(data, requires_grad=True), Variable(target)
         err_natural, err_robust = _pgd_whitebox(model, X, y)
         robust_err_total += err_robust
         natural_err_total += err_natural
         total += data.size(0)
+        pbar.set_description(f'#steps:{pgd_steps}, #eot: {num_eot} | '
+                            f'Nat Err: {natural_err_total} | '
+                            f'Rob Err: {robust_err_total} | '
+                            f'Total: {total} \n' )
+        
         if total >= 1000:
             break
     print(f"clean accuracy: {(1 - natural_err_total / total):.2%}, robust accuracy: {(1 - robust_err_total / total):.2%}")
@@ -418,16 +438,18 @@ def eval_adv_test_blackbox(model_target, device, data_dir, images_test_np, label
     """
     evaluate model by black-box attack
     """
+    bs = 48
     transform_test = torchvision.transforms.Compose([torchvision.transforms.ToTensor(),])
     testset = torchvision.datasets.CIFAR100(root=data_dir, train=False, download=True, transform=transform_test)
-    test_loader = torch.utils.data.DataLoader(testset, batch_size=32, shuffle=False, num_workers=2)
-    
+    test_loader = torch.utils.data.DataLoader(testset, batch_size=bs, shuffle=False, num_workers=2)
+    # model_target.fix_seed = True
 
     model_source = SourceModel(copy.deepcopy(model_target.imported_model), model_target.multichannel_fn, classes=100).to("cuda")
     model_source.layer_operations = copy.deepcopy(model_target.layer_operations)
     model_source.linear_layers = copy.deepcopy(model_target.linear_layers)
     model_source.fix_seed = False
-    
+
+        
     model_target.eval()
     model_source.eval()
     
@@ -444,15 +466,24 @@ def eval_adv_test_blackbox(model_target, device, data_dir, images_test_np, label
     robust_err_total_target = 0
     natural_err_total = 0
     total = 0
-    for data, target in test_loader:
-        data, target = data.to(device), target.to(device)
+    num_eot = 1
+    pgd_steps = 200
+    pbar = tqdm(test_loader, ncols=100)
+    for data, target in pbar:
+        data, target = data.cuda(), target.cuda()
         # pgd attack
         X, y = Variable(data, requires_grad=True), Variable(target)
-        err_natural, err_robust_on_source, err_robust_on_target = _pgd_blackbox(model_target, model_source, X, y)
+        err_natural, err_robust_on_source, err_robust_on_target = _pgd_blackbox(model_target, model_source, X, y, num_eot=num_eot, num_steps=pgd_steps)
         robust_err_total_source += err_robust_on_source
         robust_err_total_target += err_robust_on_target
         natural_err_total += err_natural
         total += data.size(0)
+        pbar.set_description(f'#steps:{pgd_steps}, #eot:{num_eot}, #bs:{bs} | '
+                            f'Nat Err: {natural_err_total} | '
+                            f'Rob_S Err: {robust_err_total_source} | '
+                            f'Rob_T Err: {robust_err_total_target} | '
+                            f'Total: {total} \n' )
+    
         if total >= 1000:
             break
         
@@ -462,11 +493,11 @@ def eval_adv_test_blackbox(model_target, device, data_dir, images_test_np, label
 #! This is an example on CIFAR-100.
 def main():
     # 1. Set up the environment and the model
-    save_path = "/data/projects/ensem_adv/ckpts_3"
+    save_path = "/data/projects/ensem_adv/ckpts_4"
     if not os.path.exists(save_path):
         os.makedirs(save_path)
     data_dir = "/local/home/jiezha/data/"
-    setup_seed(2024)
+    setup_seed(1)
     resolutions = [32,16,8,4] # pretty arbitrary
     classes = 100
     in_planes = 3
@@ -569,7 +600,12 @@ def main():
         print(f"Self-ensemble test acc = {self_ensemble_test_acc}")
         print("\n---------------------------------------------\n")
 
+    # test_per_layer()
+    # test_ensemble()
     # eval_adv_test_whitebox(model, device="cuda", data_dir=data_dir)
+    
+
+    
     eval_adv_test_blackbox(model, device="cuda", data_dir=data_dir, images_test_np=images_test_np, labels_test_np=labels_test_np)
     
     if False:
