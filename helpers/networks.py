@@ -66,6 +66,12 @@ class TargetModel(nn.Module):
             imported_model.avgpool,
             imported_model.fc,
         ]
+    def _set_double(self):
+        for l in self.layer_operations:
+            l.double()
+        for l in self.linear_layers:
+            l.double()
+        self.imported_model.double()
         
     def _create_batchnorm_linear(self, in_features, out_features):
         """Helper function to create a BatchNorm + Linear block."""
@@ -104,35 +110,47 @@ class TargetModel(nn.Module):
 
     def predict_from_several_layers(self, x, layers):
         """Predict from several layers."""
-        # import pdb; pdb.set_trace()
+        # x = x.double()        
         x = self.prepare_input(x)
         outputs = dict()
+        # self.linear_layers[0] = self.linear_layers[0].double()
         outputs[0] = self.linear_layers[0](x.reshape([x.shape[0], -1]))
-
+        # self.linear_layers[0] = self.linear_layers[0].float()
         for l in range(len(self.layer_operations)):
             if list(x.shape)[1:] == [2048, 1, 1]:
                 x = x.reshape([-1, 2048])
+            # self.layer_operations[l] = self.layer_operations[l].double()
             x = self.layer_operations[l](x)
-
+            # self.layer_operations[l] = self.layer_operations[l].float()
             if l in layers:
+                # self.linear_layers[l + 1] = self.linear_layers[l + 1].double()
                 outputs[l + 1] = self.linear_layers[l + 1](x.reshape([x.shape[0], -1]))
+                # self.linear_layers[l + 1] = self.linear_layers[l + 1].float()
+                
 
+        
         return outputs
     
     def forward(self, x):
         """Main forward pass, combining multiple layer predictions."""
         all_logits = self.predict_from_several_layers(x, [l - 1 for l in [0, 1, 5, 10, 20, 30, 35, 40, 45, 50, 52][1:]])
         # Add prediction from the backbone model itself
-        all_logits[54] = self.imported_model(self.prepare_input(x))
-
-        # Stack logits from specific layers, [20,30,35,40,45,50,52]
-        all_logits = torch.stack([all_logits[l] for l in [20, 30, 35, 40, 45, 50, 52, 54]], dim=1)
-
+        x_ = self.prepare_input(x)
+        # import pdb; pdb.set_trace()
+        # self.imported_model.double()  
+        # x_ = x_.double()                
+        all_logits[54] = self.imported_model(x_)
+        # self.imported_model.float()
+        #! now all_logits matchs, but stack_logits is not
+        stack_logits = torch.stack([all_logits[l] for l in [20, 30, 35, 40, 45, 50, 52, 54]], dim=1)
+        # print("sum:", [all_logits[l][0].sum().item() for l in [20, 30, 35, 40, 45, 50, 52, 54]])
+        # import pdb; pdb.set_trace()
         # Normalize and extract logits
-        all_logits = all_logits - torch.max(all_logits, dim=2, keepdim=True).values
-        all_logits = all_logits - torch.max(all_logits, dim=1, keepdim=True).values
-        logits = torch.topk(all_logits, 3, dim=1).values[:, 2]
-
+        stack_logits = stack_logits - torch.max(stack_logits, dim=2, keepdim=True).values
+        stack_logits = stack_logits - torch.max(stack_logits, dim=1, keepdim=True).values
+        
+        logits = torch.topk(stack_logits, 3, dim=1).values[:, 2]
+        # logits = logits.float()
         return logits   # [bs, 100]
     
     def forward_original(self, x):

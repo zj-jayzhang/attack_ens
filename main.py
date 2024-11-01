@@ -15,7 +15,7 @@ from torchvision import transforms
 import matplotlib.pyplot as plt
 from contextlib import contextmanager
 from tqdm import tqdm
-
+import argparse
 import warnings
 from pathlib import Path
 from typing import Callable, Optional, Sequence, Tuple, Union
@@ -323,7 +323,13 @@ def _pgd_blackbox(
     model_target.eval()
     layer = 50
     #! make sure that for the target model, all defenses are turned on
+    # model_target._set_double()
+    # model_source._set_double()
+    # X = X.double()
+    
+    
     out = model_target(X)
+    
     err = (out.data.max(1)[1] != y.data).float().sum()
     X_pgd = Variable(X.data, requires_grad=True)
     if random:
@@ -355,9 +361,11 @@ def _pgd_blackbox(
         eta = torch.clamp(X_pgd.data - X.data, -epsilon, epsilon)
         X_pgd = Variable(X.data + eta, requires_grad=True)
         X_pgd = Variable(torch.clamp(X_pgd, 0, 1.0), requires_grad=True)
-        
-        
-        
+        # print(f"X_pgd={X_pgd[0].sum()}")
+        # print(f"X={X[0].sum()}")
+        # # exit the whole program
+        # os._exit(0)
+        # import pdb; pdb.set_trace()
     err_pgd_on_source = (model_source.get_logits_from_several_layers(X_pgd, layer).data.max(1)[1] != y.data).float().sum()
     # err_pgd_on_source = (model_source.get_logits_from_layer(X_pgd, layer).data.max(1)[1] != y.data).float().sum()
     
@@ -372,10 +380,11 @@ def _pgd_whitebox(
                 y,
                 epsilon=0.031,
                 num_steps=20,
-                step_size=0.003,
+                step_size=0.003, # 0.003
                 random=True,
                 ):
     out = model(X)
+    
     err = (out.data.max(1)[1] != y.data).float().sum()
     X_pgd = Variable(X.data, requires_grad=True)
     if random:
@@ -434,20 +443,20 @@ def eval_adv_test_whitebox(model, device, data_dir):
             break
     print(f"clean accuracy: {(1 - natural_err_total / total):.2%}, robust accuracy: {(1 - robust_err_total / total):.2%}")
 
-def eval_adv_test_blackbox(model_target, device, data_dir, images_test_np, labels_test_np, layer_i=40):
+def eval_adv_test_blackbox(model_target, device, data_dir, images_test_np, labels_test_np, layer_i=40, args=None):
     """
     evaluate model by black-box attack
     """
-    bs = 48
+    bs = args.bs
     transform_test = torchvision.transforms.Compose([torchvision.transforms.ToTensor(),])
     testset = torchvision.datasets.CIFAR100(root=data_dir, train=False, download=True, transform=transform_test)
     test_loader = torch.utils.data.DataLoader(testset, batch_size=bs, shuffle=False, num_workers=2)
-    # model_target.fix_seed = True
+    model_target.fix_seed = True
 
     model_source = SourceModel(copy.deepcopy(model_target.imported_model), model_target.multichannel_fn, classes=100).to("cuda")
     model_source.layer_operations = copy.deepcopy(model_target.layer_operations)
     model_source.linear_layers = copy.deepcopy(model_target.linear_layers)
-    model_source.fix_seed = False
+    model_source.fix_seed = True
 
         
     model_target.eval()
@@ -466,8 +475,8 @@ def eval_adv_test_blackbox(model_target, device, data_dir, images_test_np, label
     robust_err_total_target = 0
     natural_err_total = 0
     total = 0
-    num_eot = 1
-    pgd_steps = 200
+    num_eot = args.eot
+    pgd_steps = args.steps
     pbar = tqdm(test_loader, ncols=100)
     for data, target in pbar:
         data, target = data.cuda(), target.cuda()
@@ -489,11 +498,20 @@ def eval_adv_test_blackbox(model_target, device, data_dir, images_test_np, label
         
     print(f"clean accuracy: {(1 - natural_err_total / total):.2%}, robust accuracy on source: {(1 - robust_err_total_source / total):.2%}, robust accuracy on target: {(1 - robust_err_total_target / total):.2%}")
 
+def get_args():
+    
+    parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
+    parser.add_argument('--bs', default=48, type=int, help='batch size')
+    parser.add_argument('--steps', default=20, type=int, help='number of steps')
+    parser.add_argument('--eot', default=1, type=int, help='number of eot')
+    args = parser.parse_args()
+    return args
 
 #! This is an example on CIFAR-100.
 def main():
     # 1. Set up the environment and the model
-    save_path = "/data/projects/ensem_adv/ckpts_4"
+    args = get_args()
+    save_path = "/data/projects/ensem_adv/ckpts_5"  #4
     if not os.path.exists(save_path):
         os.makedirs(save_path)
     data_dir = "/local/home/jiezha/data/"
@@ -606,7 +624,7 @@ def main():
     
 
     
-    eval_adv_test_blackbox(model, device="cuda", data_dir=data_dir, images_test_np=images_test_np, labels_test_np=labels_test_np)
+    eval_adv_test_blackbox(model, device="cuda", data_dir=data_dir, images_test_np=images_test_np, labels_test_np=labels_test_np, args=args)
     
     if False:
     

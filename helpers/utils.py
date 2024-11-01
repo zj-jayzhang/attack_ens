@@ -81,75 +81,99 @@ def cifar100_class_to_description(class_num):
     else:
         return "Invalid class number"
     
-    
 
+#! per-sample randomness
 def apply_transformations(
     images: torch.Tensor, 
     down_res: int = 224, 
     up_res: int = 224, 
-    jit_x: torch.Tensor = 0, 
-    jit_y: torch.Tensor = 0, 
     down_noise: float = 0.0, 
     up_noise: float = 0.0, 
-    contrast: torch.Tensor = 1.0, 
-    color_amount: torch.Tensor = 1.0,
     fix_seed: bool = False
 ) -> torch.Tensor:
 
-    # # for MNIST alone
-    # images = torch.mean(images,axis=1,keepdims=True)
-
     images_collected = []
-
+    jit_size = 3
     for i in range(images.shape[0]):
-
+        # Select a single sample
         image = images[i]
+        
+        jit_x = custom_choices(range(-jit_size,jit_size+1),  fix_seed)
+        jit_y = custom_choices(range(-jit_size,jit_size+1), fix_seed)
+        contrast = custom_choices(np.linspace(0.7,1.5,100),  fix_seed)
+        color_amount  = custom_choices(np.linspace(0.5,1.0,100), fix_seed)
+        # print("sum over all", jit_x+jit_y+contrast+color_amount)
+        # Adjust contrast
+        # import pdb; pdb.set_trace()
+        image = torchvision.transforms.functional.adjust_contrast(image, contrast)
 
-        # changing contrast
-        image = torchvision.transforms.functional.adjust_contrast(image, contrast[i])
+        # Shift in the x and y directions
+        image = torch.roll(image, shifts=(jit_x, jit_y), dims=(-2, -1))
 
-        # shift the result in x and y
-        image = torch.roll(image,shifts=(jit_x[i], jit_y[i]),dims=(-2,-1))
+        # Shift between color and grayscale
+        image = color_amount * image + torch.mean(image, axis=0, keepdims=True) * (1 - color_amount)
 
-        # shifting in the color <-> grayscale axis
-        image = color_amount[i]*image + torch.mean(image,axis=0,keepdims=True)*(1-color_amount[i])
+        # Downsample
+        image = F.interpolate(image.unsqueeze(0), size=(down_res, down_res), mode='bicubic').squeeze(0)
 
+        # Add low-resolution noise
+        noise_down = down_noise * custom_rand((1, 3, down_res, down_res), fix_seed).to(image.device)
+        # import pdb; pdb.set_trace()
+        # print("down_noise", noise.sum())
+        image = image + noise_down.squeeze(0)
+
+        # Upsample
+        image = F.interpolate(image.unsqueeze(0), size=(up_res, up_res), mode='bicubic').squeeze(0)
+
+        # Add high-resolution noise
+        noise_up = up_noise * custom_rand((1, 3, up_res, up_res), fix_seed).to(image.device)
+        # print("up_noise", noise.sum())
+        image = image + noise_up.squeeze(0)
+
+        # Clip values to the valid range [0, 1]
+        image = torch.clip(image, 0, 1)
+
+        # Add to the result list
         images_collected.append(image)
-    # import pdb; pdb.set_trace()
+        # print(f"down_res={down_res},  down_noise={noise_down.sum()}, up_noise={noise_up.sum()}, sum over all:{jit_x+jit_y+contrast+color_amount}")
+
+    # Stack the results into a batch tensor
     images = torch.stack(images_collected, axis=0)
 
-    # descrease the resolution
-    images = F.interpolate(images, size=(down_res,down_res), mode='bicubic')
-
-    # low res noise
-    noise = down_noise * custom_rand((images.shape[0],3,down_res,down_res), fix_seed).to("cuda")
-    images = images + noise
-
-    # increase the resolution
-    images = F.interpolate(images, size=(up_res,up_res), mode='bicubic')
-
-    # high res noise
-    noise = up_noise * custom_rand((images.shape[0],3,up_res,up_res), fix_seed).to("cuda")
-    images = images + noise
-
-    # clipping to the right range of values
-    images = torch.clip(images,0,1)
-
     return images
+
+
+
 
 
 def custom_rand(size: int, fix_seed: bool = False) -> torch.Tensor:
     if fix_seed:
         setup_seed(0)
-    return torch.Tensor(
+    # setup_seed(0)
+    #! make sure len(size)=1
+    # assert len(size) == 1
+    random_tensor = torch.Tensor(
         np.random.rand(*size)
-    ).to("cuda")
+    )
+    # print("stage 1", random_tensor.sum())
+    # import pdb; pdb.set_trace()
+    return random_tensor.to("cuda")
+    # return torch.Tensor(
+    #     np.random.rand(*size)
+    # ).to("cuda")
 
 
-def custom_choices(items: np.ndarray, tensor: torch.Tensor, fix_seed: bool = False) -> torch.Tensor:
+def custom_choices(items: np.ndarray,  fix_seed: bool = False) -> torch.Tensor:
     if fix_seed:
         setup_seed(0)
-    return np.random.choice(items,(len(tensor)))
+    # setup_seed(0)
+    #! make sure len(tensor)=1
+    # assert len(tensor) == 1
+    random_np = np.random.choice(items,(1)) 
+    # print("stage 2", random_np.sum())
+    # import pdb; pdb.set_trace()
+    return random_np[0]
+    # return np.random.choice(items,(len(tensor)))
 
 
 def get_dataset(data_dir: str, classes: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -204,23 +228,19 @@ def make_multichannel_input(images: torch.Tensor,
     all_channels = []
 
     for i, down_res in enumerate(resolutions):
-        jits_x = custom_choices(range(-jit_size,jit_size+1), images, fix_seed)
-        jits_y = custom_choices(range(-jit_size,jit_size+1), images, fix_seed)
-        contrasts = custom_choices(np.linspace(0.7,1.5,100), images, fix_seed)
-        #? color_amounts = contrasts??
-        color_amounts  = custom_choices(np.linspace(0.5,1.0,100), images, fix_seed)
+        # jits_x = custom_choices(range(-jit_size,jit_size+1), images, fix_seed)
+        # jits_y = custom_choices(range(-jit_size,jit_size+1), images, fix_seed)
+        # contrasts = custom_choices(np.linspace(0.7,1.5,100), images, fix_seed)
+        # #? color_amounts = contrasts??
+        # color_amounts  = custom_choices(np.linspace(0.5,1.0,100), images, fix_seed)
 
 
         images_now = apply_transformations(
             images,
             down_res = down_res,
             up_res = up_res,
-            jit_x = jits_x,
-            jit_y = jits_y,
             down_noise = down_noise,
             up_noise = up_noise,
-            contrast = contrasts,
-            color_amount = color_amounts,
         )
 
         all_channels.append(images_now)
