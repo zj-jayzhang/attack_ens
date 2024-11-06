@@ -419,31 +419,30 @@ def adaptive_attack(model_target, args):
         true_labels_cp = copy.deepcopy(true_labels)
     #! we pick the samples that are correctly classified by the target model, then do non-adaptive attack
     # calculate the robust accuracy of the target model 5 times, pick samples that are correctly classified
-    import pdb; pdb.set_trace()
+    # import pdb; pdb.set_trace()
     picked_indices = []
     for i in range(5):
         predict = eval_model(model_target, np.transpose(saved_adv_images_np, (0, 2, 3, 1)), true_labels, forward_fn="ensemble", return_pred=True)
         picked_indices.append(np.where(predict == true_labels)[0])
     picked_indices = np.concatenate(picked_indices, axis=0)
     indices = np.unique(picked_indices)
-    print(f"furthur finetuining with {len(indices)} samples")
+    print(f"further finetuining with {len(indices)} samples") 
     saved_adv_images_np = saved_adv_images_np[indices]
     true_labels = true_labels[indices]
     
     saved_adv_images = torch.tensor(saved_adv_images_np, dtype=torch.float32).cuda()
     y = torch.tensor(true_labels, dtype=torch.long).cuda()
-    # set batch size to 16, then do non-adaptive attack
     bs_ = 4
-    robust_err_total_source = 0
+    natural_err_total = 0
     robust_err_total_target = 0
     for i in range(0, len(saved_adv_images), bs_):
         X = saved_adv_images[i:i+bs_]
         y_batch = y[i:i+bs_]
         err_natural, err_robust, X_pgd = _pgd_attack(model_target, X, y_batch, num_steps=pgd_steps, num_eot=4)
-        robust_err_total_source += err_robust
+        robust_err_total_target += err_robust
         natural_err_total += err_natural
         saved_adv_images_np_cp[indices[i:i+bs_]] = X_pgd.cpu().detach().numpy()
-        print(f"Nat Err: {natural_err_total} | Rob Err: {robust_err_total_source} | Total: {(i+1)*bs_}")
+        print(f"Nat Err: {natural_err_total} | Rob Err: {robust_err_total_target} | Total: {i+bs_}")
 
     # evaluate the model for 10 times, then report the average accuracy and std
     mean_acc = []
