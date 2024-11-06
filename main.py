@@ -324,7 +324,7 @@ def main():
     # import pdb; pdb.set_trace()
     
     # 7. Evaluate the robustness of the model under AutoAttack
-    if True:
+    if False:
         with isolated_environment():
             time_start = time.time()
             benchmark(

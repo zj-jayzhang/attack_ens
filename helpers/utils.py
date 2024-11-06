@@ -93,7 +93,7 @@ from tqdm import tqdm
 
 
 
-def eval_model(model,images_in,labels_in,batch_size=128, forward_fn="original", layers=0):
+def eval_model(model,images_in,labels_in,batch_size=128, forward_fn="original", layers=0, return_pred=False):
     all_preds = []
     all_logits = []
 
@@ -120,8 +120,10 @@ def eval_model(model,images_in,labels_in,batch_size=128, forward_fn="original", 
 
     all_preds = np.concatenate(all_preds,axis=0)
     all_logits = np.concatenate(all_logits,axis=0)
-
-    return np.sum(all_preds == labels_in), all_preds.shape[0], all_logits
+    if return_pred:
+        return all_preds
+    else:
+        return np.sum(all_preds == labels_in), all_preds.shape[0], all_logits
 
 
         

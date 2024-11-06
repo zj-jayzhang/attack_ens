@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from helpers.networks import SourceModel
-from helpers.utils import eval_model, get_dataset, visualize_adv_images
+from helpers.utils import eval_model, get_dataset
 from torch.autograd import Variable
 import copy
 from tqdm import tqdm
@@ -201,13 +201,10 @@ def _pgd_adaptive_attack(
         X_pgd = Variable(X.data + eta, requires_grad=True)
         X_pgd = Variable(torch.clamp(X_pgd, 0, 1.0), requires_grad=True)
         
-    # err_pgd_on_source = (model_source.forward_original(X_pgd).data.max(1)[1] != y.data).float().sum()
     err_pgd_on_source = (model_source.get_logits_from_several_layers(X_pgd, layer).data.max(1)[1] != y.data).float().sum()
-    # err_pgd_on_source = (model_source.get_logits_from_layer(X_pgd, layer).data.max(1)[1] != y.data).float().sum()
-    
-    err_pgd_on_target = (model_target.forward_original(X_pgd).data.max(1)[1] != y.data).float().sum()
-    # err_pgd_on_target = (model_target(X_pgd).data.max(1)[1] != y.data).float().sum()
-    # print(f'clean_err={err.item()}, adv_err_on_source={err_pgd_on_source.item()}, adv_err_on_target={err_pgd_on_target.item()}')
+    # err_pgd_on_source = (model_source.forward_original(X_pgd).data.max(1)[1] != y.data).float().sum()
+
+    err_pgd_on_target = (model_target(X_pgd).data.max(1)[1] != y.data).float().sum()
     return err, err_pgd_on_source, err_pgd_on_target, X_pgd
 
 
@@ -219,6 +216,7 @@ def _pgd_attack(
                 num_steps=20,
                 step_size=0.003, # 0.003
                 random=True,
+                num_eot=1,
                 ):
     out = model(X)
     
@@ -231,9 +229,12 @@ def _pgd_attack(
     for _ in range(num_steps):
         opt = optim.SGD([X_pgd], lr=1e-3)
         opt.zero_grad()
-
-        with torch.enable_grad():
-            loss = nn.CrossEntropyLoss()(model(X_pgd), y)
+        loss = 0
+        for i in range(num_eot):
+            x_transformed = X_pgd
+            loss += nn.CrossEntropyLoss()(model(x_transformed), y)
+        # with torch.enable_grad():
+        #     loss = nn.CrossEntropyLoss()(model(X_pgd), y)
         loss.backward()
         eta = step_size * X_pgd.grad.data.sign()
         X_pgd = Variable(X_pgd.data + eta, requires_grad=True)
@@ -263,13 +264,6 @@ def non_adaptive_attack(model, args, targetd_attack=False):
     for data, target in pbar:
         data, target = data.cuda(), target.cuda()
         X, y = Variable(data, requires_grad=True), Variable(target)
-        #! target attack
-        indices = torch.where(y ==57)[0]
-        X = X[indices]
-        y = y[indices]
-        print("targeted attack, len(y):", len(y))
-        if len(y) == 0:
-            continue
         if targetd_attack:
             err_natural, err_robust, X_pgd = _pgd_targeted_attack(model, X, y, num_steps=pgd_steps)
         else:
@@ -289,7 +283,7 @@ def non_adaptive_attack(model, args, targetd_attack=False):
     
     print(f"clean accuracy: {(1 - natural_err_total / total):.2%}, robust accuracy: {(1 - robust_err_total / total):.2%}")
 
-def adaptive_attack(model_target, args):
+def adaptive_attack_old(model_target, args):
     """
     evaluate model by our adaptive attack
     """
@@ -317,7 +311,7 @@ def adaptive_attack(model_target, args):
     total = 0
     num_eot = args.eot
     pgd_steps = args.steps
-    pbar = tqdm(test_loader, ncols=100)
+    pbar = tqdm(test_loader, ncols=150)
     # description = "fix" if only_attack_cross_max else "non-fix" 
     description = args.dataset
     saved_adv_images = []
@@ -357,3 +351,89 @@ def adaptive_attack(model_target, args):
     print(f"robust accuracy on target: {np.mean(mean_acc):.2%}+-{np.std(mean_acc):.2%}")
     
     
+def adaptive_attack(model_target, args):
+    """
+    evaluate model by our adaptive attack
+    """
+    _, images_test_np, _, labels_test_np, test_loader = get_dataset(args.data_dir, classes=args.classes, batch_size=args.bs)
+
+    model_source = SourceModel(copy.deepcopy(model_target.imported_model), model_target.multichannel_fn, classes=args.classes).to("cuda")
+    model_source.layer_operations = copy.deepcopy(model_target.layer_operations)
+    model_source.linear_layers = copy.deepcopy(model_target.linear_layers)
+    
+
+        
+    model_target.eval()
+    model_source.eval()
+    
+    # note: source model should have a similar test accuracy as the target model
+    if False:
+        test_hits,test_count,_ = eval_model(model_source, images_test_np, labels_test_np, forward_fn="ensemble")
+        print(f"source model test={test_hits}/{test_count}={test_hits/test_count}")
+        test_hits,test_count,_ = eval_model(model_target, images_test_np, labels_test_np, forward_fn="ensemble")
+        print(f"target model test={test_hits}/{test_count}={test_hits/test_count}")
+    
+    robust_err_total_source = 0
+    robust_err_total_target = 0
+    natural_err_total = 0
+    total = 0
+    num_eot = args.eot
+    pgd_steps = args.steps
+    pbar = tqdm(test_loader, ncols=150)
+    # description = "fix" if only_attack_cross_max else "non-fix" 
+    description = args.dataset
+    saved_adv_images = []
+    true_labels = []
+    for data, target in pbar:
+        data, target = data.cuda(), target.cuda()
+        X, y = Variable(data, requires_grad=True), Variable(target)
+        #! we do transfer attack on the source model
+        err_natural, err_robust_on_source, err_robust_on_target, X_pgd = _pgd_adaptive_attack(model_target, model_source, X, y, num_eot=num_eot, num_steps=pgd_steps)
+        robust_err_total_source += err_robust_on_source
+        robust_err_total_target += err_robust_on_target
+        natural_err_total += err_natural
+        total += data.size(0)
+        pbar.set_description(f'{description}, #steps:{pgd_steps}, #eot:{num_eot}, #bs:{args.bs} | #Err:'
+                            f'Nat: {natural_err_total} | '
+                            f'Rob_S: {robust_err_total_source} | '
+                            f'Rob_T: {robust_err_total_target} | '
+                            f'Total: {total} \n' )
+        saved_adv_images.append(X_pgd.cpu().detach().numpy())
+        true_labels.append(y.cpu().detach().numpy())
+        if total >= args.num_test:
+            break
+        
+
+    saved_adv_images_np = np.concatenate(saved_adv_images, axis=0)
+    saved_adv_images_np_cp = copy.deepcopy(saved_adv_images_np)
+    true_labels = np.concatenate(true_labels, axis=0)
+    true_labels_cp = copy.deepcopy(true_labels)
+    #! we pick the samples that are correctly classified by the target model, then do non-adaptive attack
+    # calculate the robust accuracy of the target model 5 times, pick samples that are correctly classified
+    picked_indices = []
+    for i in range(5):
+        predict = eval_model(model_target, np.transpose(saved_adv_images_np, (0, 2, 3, 1)), true_labels, forward_fn="ensemble", return_pred=True)
+        picked_indices.append(np.where(predict == true_labels)[0])
+    picked_indices = np.concatenate(picked_indices, axis=0)
+    indices = np.unique(picked_indices)
+    saved_adv_images_np = saved_adv_images_np[indices]
+    true_labels = true_labels[indices]
+    
+    saved_adv_images = torch.tensor(saved_adv_images_np, dtype=torch.float32).cuda()
+    y = torch.tensor(true_labels, dtype=torch.long).cuda()
+    # set batch size to 16, then do non-adaptive attack
+    for i in range(0, len(saved_adv_images), 16):
+        X = saved_adv_images[i:i+16]
+        y_batch = y[i:i+16]
+        err_natural, err_robust, X_pgd = _pgd_attack(model_target, X, y_batch, num_steps=pgd_steps)
+        saved_adv_images_np_cp[indices[i:i+16]] = X_pgd.cpu().detach().numpy()
+        print(f"Nat Err: {err_natural} | Rob Err: {err_robust} | Total: {16} \n")
+
+    # evaluate the model for 10 times, then report the average accuracy and std
+    mean_acc = []
+    for i in range(10):
+        test_hits, test_count, _ = eval_model(model_target, np.transpose(saved_adv_images_np_cp, (0, 2, 3, 1)), true_labels_cp, forward_fn="ensemble")
+        acc = test_hits/test_count
+        mean_acc.append(acc)
+    print(f"robust accuracy on target: {np.mean(mean_acc):.2%}+-{np.std(mean_acc):.2%}")
+ 
