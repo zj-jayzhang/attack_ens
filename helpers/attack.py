@@ -422,12 +422,13 @@ def adaptive_attack(model_target, args):
     saved_adv_images = torch.tensor(saved_adv_images_np, dtype=torch.float32).cuda()
     y = torch.tensor(true_labels, dtype=torch.long).cuda()
     # set batch size to 16, then do non-adaptive attack
-    for i in range(0, len(saved_adv_images), 16):
-        X = saved_adv_images[i:i+16]
-        y_batch = y[i:i+16]
-        err_natural, err_robust, X_pgd = _pgd_attack(model_target, X, y_batch, num_steps=pgd_steps)
-        saved_adv_images_np_cp[indices[i:i+16]] = X_pgd.cpu().detach().numpy()
-        print(f"Nat Err: {err_natural} | Rob Err: {err_robust} | Total: {16} \n")
+    bs_ = 4
+    for i in range(0, len(saved_adv_images), bs_):
+        X = saved_adv_images[i:i+bs_]
+        y_batch = y[i:i+bs_]
+        err_natural, err_robust, X_pgd = _pgd_attack(model_target, X, y_batch, num_steps=pgd_steps, num_eot=4)
+        saved_adv_images_np_cp[indices[i:i+bs_]] = X_pgd.cpu().detach().numpy()
+        print(f"Nat Err: {err_natural} | Rob Err: {err_robust} | Total: {bs_} \n")
 
     # evaluate the model for 10 times, then report the average accuracy and std
     mean_acc = []
@@ -436,4 +437,4 @@ def adaptive_attack(model_target, args):
         acc = test_hits/test_count
         mean_acc.append(acc)
     print(f"robust accuracy on target: {np.mean(mean_acc):.2%}+-{np.std(mean_acc):.2%}")
- 
+    
