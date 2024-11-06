@@ -1,13 +1,14 @@
 import os
 import time
 from helpers.attack import adaptive_attack, benchmark, non_adaptive_attack
+from helpers.visualization import get_complex_specification_adversaries, hard_to_soft_targets, visualize_adv_imgs_from_real, visualize_adv_imgs_from_random
 import numpy as np
 
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from helpers.networks import TargetModel, get_network
-from helpers.utils import eval_model, fgsm_attack, get_dataset, make_multichannel_input, plot_images, setup_seed
+from helpers.utils import cifar100_class_to_description, eval_model, fgsm_attack, get_dataset, make_multichannel_input, plot_images, setup_seed
 import random
 import copy
 import matplotlib.pyplot as plt
@@ -16,6 +17,7 @@ from tqdm import tqdm
 import argparse
 
 import matplotlib.pyplot as plt
+
 
 
 
@@ -82,9 +84,9 @@ def train_model(
         train_optimizer = optimizer_in(model_in.imported_model.parameters(), lr=lr)
     else:
         train_optimizer = optimizer_in(model_in.linear_layers[layers].parameters(), lr=lr)
-    setup_seed(1)
+    #! for reproducibility
+    # setup_seed(1)
     for epoch in range(epochs):
-        # setup_seed(1+epoch)
         randomized_ids = np.random.permutation(range(len(images_in)))
         its = int(np.ceil(float(len(images_in)) / float(batch_size)))
         pbar = tqdm(range(its), desc='Training', ncols=100)
@@ -179,7 +181,8 @@ def get_args():
     parser.add_argument('--steps', default=20, type=int, help='number of steps')
     parser.add_argument('--eot', default=1, type=int, help='number of eot')
     # save_path
-    parser.add_argument('--save_path', default="/data/projects/ensem_adv/ckpts_test", type=str, help='save path')
+    parser.add_argument('--save_path', default="/data/projects/ensem_adv/ckpts_test_noseed", type=str, help='save path')
+    # parser.add_argument('--save_path', default="/data/projects/ensem_adv/ckpts_test", type=str, help='save path')
     parser.add_argument('--img_path', default="./imgs", type=str, help='save path for images')
     # data_dir
     parser.add_argument('--data_dir', default="/local/home/jiezha/data/", type=str, help='data directory')
@@ -215,7 +218,7 @@ def main():
     args.classes = 100 if args.dataset == "cifar100" else 10
     images_train_np, images_test_np, labels_train_np, labels_test_np, _ = get_dataset(data_dir=args.data_dir, classes=args.classes)
     # visualize the first image to show 4 resolutions
-    plot_images(images_test_np, resolutions=args.resolutions, save_path=args.img_path)
+    # plot_images(images_test_np, resolutions=args.resolutions, save_path=args.img_path)
     
     # 2. Set up the model
     network = get_network()
@@ -253,7 +256,6 @@ def main():
     # load the new weights from finetuned model
     model._layer_operations(model.imported_model)
     for layer_i in reversed(args.layers_to_use):
-        # setup_seed(1)
         if os.path.exists(f"{save_path}/linear_model_{layer_i}.pth"):
             print(f"============== Loading linear model {layer_i} ==============")
             model.linear_layers[layer_i].load_state_dict(torch.load(f"{save_path}/linear_model_{layer_i}.pth"))
@@ -308,11 +310,11 @@ def main():
         print(f"Self-ensemble test acc = {self_ensemble_test_acc}")
         print("\n---------------------------------------------\n")
 
-    test_per_layer()
-    test_ensemble()
+    # test_per_layer()
+    # test_ensemble()
     
     # 5. Evaluate the robustness of the model under PGD attack, non-adaptive attack
-    # non_adaptive_attack(model, args=args, targetd_attack=False)
+    # non_adaptive_attack(model, args=args, targetd_attack=True)
 
     # 6. Evaluate the robustness of the model under adaptive attack
     adaptive_attack(model, args=args)
@@ -322,29 +324,30 @@ def main():
     # import pdb; pdb.set_trace()
     
     # 7. Evaluate the robustness of the model under AutoAttack
-    with isolated_environment():
-        time_start = time.time()
-        benchmark(
-                model.eval(),
-                dataset=args.dataset,
-                threat_model='Linf',
-                device=torch.device("cuda"),
-                eps=8/255,
-                n_examples=args.num_test, 
-                version='rand',
-                batch_size=32,
-                args=args
-            )
-        time_end = time.time()
-        print(f"Time cost:  {(time_end-time_start)/60} mins")
+    if True:
+        with isolated_environment():
+            time_start = time.time()
+            benchmark(
+                    model.eval(),
+                    dataset=args.dataset,
+                    threat_model='Linf',
+                    device=torch.device("cuda"),
+                    eps=8/255,
+                    n_examples=args.num_test, 
+                    version='rand',
+                    batch_size=32,
+                    args=args
+                )
+            time_end = time.time()
+            print(f"Time cost:  {(time_end-time_start)/60} mins")
     
- 
-    
-    
-
+    # 8. visualize the adversarial examples
+    # visualize_adv_imgs_from_real(model, images_test_np, labels_test_np, args)
+    # visualize_adv_imgs_from_random(model, images_test_np, labels_test_np, args)
 
 if __name__ == '__main__':
-    setup_seed(1)
+    #! for reproducibility
+    # setup_seed(1)
     main()
 
 """

@@ -21,73 +21,73 @@ from tqdm import tqdm
 
 
 
-def visualize_adv_images(clean_xs, clean_ys, adv_xs, model, reps=10, description=""):
+# def visualize_adv_images(clean_xs, clean_ys, adv_xs, model, reps=10, description=""):
     
-    all_clean_pred_argmaxes = []
-    all_pred_argmaxes = []
+#     all_clean_pred_argmaxes = []
+#     all_pred_argmaxes = []
 
-    # Compute predictions for clean images
-    for r in range(reps):
-        with torch.no_grad():
-            logits = model(clean_xs).detach().cpu().numpy()
-            pred_argmaxes = np.argmax(logits, axis=-1)
-            all_clean_pred_argmaxes.append(pred_argmaxes)
+#     # Compute predictions for clean images
+#     for r in range(reps):
+#         with torch.no_grad():
+#             logits = model(clean_xs).detach().cpu().numpy()
+#             pred_argmaxes = np.argmax(logits, axis=-1)
+#             all_clean_pred_argmaxes.append(pred_argmaxes)
 
-    # Compute predictions for adversarial images
-    for r in range(reps):
-        with torch.no_grad():
-            logits = model(adv_xs).detach().cpu().numpy()
-            pred_argmaxes = np.argmax(logits, axis=-1)
-            all_pred_argmaxes.append(pred_argmaxes)
+#     # Compute predictions for adversarial images
+#     for r in range(reps):
+#         with torch.no_grad():
+#             logits = model(adv_xs).detach().cpu().numpy()
+#             pred_argmaxes = np.argmax(logits, axis=-1)
+#             all_pred_argmaxes.append(pred_argmaxes)
 
-    num_images = len(clean_xs)
-    images_per_page = 5
+#     num_images = len(clean_xs)
+#     images_per_page = 5
 
-    # Iterate over clean_xs in batches of 10 images
-    for page in range(0, num_images, images_per_page):
-        plt.figure(figsize=(15, images_per_page * 3))  # Set figure size
-        end = min(page + images_per_page, num_images)
+#     # Iterate over clean_xs in batches of 10 images
+#     for page in range(0, num_images, images_per_page):
+#         plt.figure(figsize=(15, images_per_page * 3))  # Set figure size
+#         end = min(page + images_per_page, num_images)
 
-        for idx, i in enumerate(range(page, end)):
-            # Plot column 1: prediction distribution for clean images
-            plt.subplot(images_per_page, 3, idx * 3 + 1)
-            vals = [pred_argmaxes[i] for pred_argmaxes in all_clean_pred_argmaxes]
-            vals_sorted, freqs_sorted = zip(*Counter(vals).most_common())
-            plt.xticks([], [])
-            plt.yticks([], [])
+#         for idx, i in enumerate(range(page, end)):
+#             # Plot column 1: prediction distribution for clean images
+#             plt.subplot(images_per_page, 3, idx * 3 + 1)
+#             vals = [pred_argmaxes[i] for pred_argmaxes in all_clean_pred_argmaxes]
+#             vals_sorted, freqs_sorted = zip(*Counter(vals).most_common())
+#             plt.xticks([], [])
+#             plt.yticks([], [])
 
-            title = f"ground truth={cifar100_class_to_description(clean_ys[i])} c={clean_ys[i]}\n"
-            for j in range(len(vals_sorted)):
-                title += f"c={vals_sorted[j]} {cifar100_class_to_description(vals_sorted[j])} = {freqs_sorted[j]}/{reps}\n"
-            plt.title(title[:-1])
+#             title = f"ground truth={cifar100_class_to_description(clean_ys[i])} c={clean_ys[i]}\n"
+#             for j in range(len(vals_sorted)):
+#                 title += f"c={vals_sorted[j]} {cifar100_class_to_description(vals_sorted[j])} = {freqs_sorted[j]}/{reps}\n"
+#             plt.title(title[:-1])
 
-            plt.imshow(clean_xs[i].detach().cpu().numpy().transpose([1, 2, 0]))
+#             plt.imshow(clean_xs[i].detach().cpu().numpy().transpose([1, 2, 0]))
 
-            # Plot column 2: attack perturbation
-            plt.subplot(images_per_page, 3, idx * 3 + 2)
-            plt.title("attack perturbation")
-            plt.imshow(0.5 + clean_xs[i].detach().cpu().numpy().transpose([1, 2, 0]) - adv_xs[i].detach().cpu().numpy().transpose([1, 2, 0]))
-            plt.xticks([], [])
-            plt.yticks([], [])
+#             # Plot column 2: attack perturbation
+#             plt.subplot(images_per_page, 3, idx * 3 + 2)
+#             plt.title("attack perturbation")
+#             plt.imshow(0.5 + clean_xs[i].detach().cpu().numpy().transpose([1, 2, 0]) - adv_xs[i].detach().cpu().numpy().transpose([1, 2, 0]))
+#             plt.xticks([], [])
+#             plt.yticks([], [])
 
-            # Plot column 3: prediction distribution for adversarial images
-            plt.subplot(images_per_page, 3, idx * 3 + 3)
-            vals = [pred_argmaxes[i] for pred_argmaxes in all_pred_argmaxes]
-            vals_sorted, freqs_sorted = zip(*Counter(vals).most_common())
-            plt.xticks([], [])
-            plt.yticks([], [])
+#             # Plot column 3: prediction distribution for adversarial images
+#             plt.subplot(images_per_page, 3, idx * 3 + 3)
+#             vals = [pred_argmaxes[i] for pred_argmaxes in all_pred_argmaxes]
+#             vals_sorted, freqs_sorted = zip(*Counter(vals).most_common())
+#             plt.xticks([], [])
+#             plt.yticks([], [])
 
-            title = ""
-            for j in range(len(vals_sorted)):
-                title += f"c={vals_sorted[j]} {cifar100_class_to_description(vals_sorted[j])} = {freqs_sorted[j]}/{reps}\n"
-            plt.title(title[:-1])
+#             title = ""
+#             for j in range(len(vals_sorted)):
+#                 title += f"c={vals_sorted[j]} {cifar100_class_to_description(vals_sorted[j])} = {freqs_sorted[j]}/{reps}\n"
+#             plt.title(title[:-1])
 
-            plt.imshow(adv_xs[i].detach().cpu().numpy().transpose([1, 2, 0]))
-            plt.tight_layout()
+#             plt.imshow(adv_xs[i].detach().cpu().numpy().transpose([1, 2, 0]))
+#             plt.tight_layout()
             
-        # Save each batch of 10 images as a separate PNG
-        plt.savefig(f"imgs/{description}_adv_batch_{page//images_per_page + 1}.png")
-        plt.close()
+#         # Save each batch of 10 images as a separate PNG
+#         plt.savefig(f"imgs/{description}_adv_batch_{page//images_per_page + 1}.png")
+#         plt.close()
 
 
 
@@ -191,6 +191,15 @@ def cifar100_class_to_description(class_num):
     else:
         return "Invalid class number"
     
+def cifar10_class_to_description(class_num):
+    classes = [
+        "airplane", "automobile", "bird", "cat", "deer", "dog", "frog", "horse", "ship", "truck"
+    ]
+
+    if 0 <= class_num < len(classes):
+        return classes[class_num]
+    else:
+        return "Invalid class number"
 
 # apply image augmentations to input images
 def apply_transformations(
