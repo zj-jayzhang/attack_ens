@@ -1,4 +1,5 @@
 
+import os
 import warnings
 import torch
 import torch.nn as nn
@@ -384,38 +385,48 @@ def adaptive_attack(model_target, args):
     description = args.dataset
     saved_adv_images = []
     true_labels = []
-    for data, target in pbar:
-        data, target = data.cuda(), target.cuda()
-        X, y = Variable(data, requires_grad=True), Variable(target)
-        #! we do transfer attack on the source model
-        err_natural, err_robust_on_source, err_robust_on_target, X_pgd = _pgd_adaptive_attack(model_target, model_source, X, y, num_eot=num_eot, num_steps=pgd_steps)
-        robust_err_total_source += err_robust_on_source
-        robust_err_total_target += err_robust_on_target
-        natural_err_total += err_natural
-        total += data.size(0)
-        pbar.set_description(f'{description}, #steps:{pgd_steps}, #eot:{num_eot}, #bs:{args.bs} | #Err:'
-                            f'Nat: {natural_err_total} | '
-                            f'Rob_S: {robust_err_total_source} | '
-                            f'Rob_T: {robust_err_total_target} | '
-                            f'Total: {total} \n' )
-        saved_adv_images.append(X_pgd.cpu().detach().numpy())
-        true_labels.append(y.cpu().detach().numpy())
-        if total >= args.num_test:
-            break
-        
+    if not os.path.exists(f"saved_adv_images_{args.dataset}.npy"):
+        for data, target in pbar:
+            data, target = data.cuda(), target.cuda()
+            X, y = Variable(data, requires_grad=True), Variable(target)
+            #! we do transfer attack on the source model
+            err_natural, err_robust_on_source, err_robust_on_target, X_pgd = _pgd_adaptive_attack(model_target, model_source, X, y, num_eot=num_eot, num_steps=pgd_steps)
+            robust_err_total_source += err_robust_on_source
+            robust_err_total_target += err_robust_on_target
+            natural_err_total += err_natural
+            total += data.size(0)
+            pbar.set_description(f'{description}, #steps:{pgd_steps}, #eot:{num_eot}, #bs:{args.bs} | #Err:'
+                                f'Nat: {natural_err_total} | '
+                                f'Rob_S: {robust_err_total_source} | '
+                                f'Rob_T: {robust_err_total_target} | '
+                                f'Total: {total} \n' )
+            saved_adv_images.append(X_pgd.cpu().detach().numpy())
+            true_labels.append(y.cpu().detach().numpy())
+            if total >= args.num_test:
+                break
+            
 
-    saved_adv_images_np = np.concatenate(saved_adv_images, axis=0)
-    saved_adv_images_np_cp = copy.deepcopy(saved_adv_images_np)
-    true_labels = np.concatenate(true_labels, axis=0)
-    true_labels_cp = copy.deepcopy(true_labels)
+        saved_adv_images_np = np.concatenate(saved_adv_images, axis=0)
+        saved_adv_images_np_cp = copy.deepcopy(saved_adv_images_np)
+        true_labels = np.concatenate(true_labels, axis=0)
+        true_labels_cp = copy.deepcopy(true_labels)
+        np.save(f"saved_adv_images_{args.dataset}.npy", saved_adv_images_np)
+        np.save(f"saved_adv_labels_{args.dataset}.npy", true_labels)
+    else:
+        saved_adv_images_np = np.load(f"saved_adv_images_{args.dataset}.npy")
+        saved_adv_images_np_cp = copy.deepcopy(saved_adv_images_np)
+        true_labels = np.load(f"saved_adv_labels_{args.dataset}.npy")
+        true_labels_cp = copy.deepcopy(true_labels)
     #! we pick the samples that are correctly classified by the target model, then do non-adaptive attack
     # calculate the robust accuracy of the target model 5 times, pick samples that are correctly classified
+    import pdb; pdb.set_trace()
     picked_indices = []
     for i in range(5):
         predict = eval_model(model_target, np.transpose(saved_adv_images_np, (0, 2, 3, 1)), true_labels, forward_fn="ensemble", return_pred=True)
         picked_indices.append(np.where(predict == true_labels)[0])
     picked_indices = np.concatenate(picked_indices, axis=0)
     indices = np.unique(picked_indices)
+    print(f"furthur finetuining with {len(indices)} samples")
     saved_adv_images_np = saved_adv_images_np[indices]
     true_labels = true_labels[indices]
     
@@ -423,12 +434,16 @@ def adaptive_attack(model_target, args):
     y = torch.tensor(true_labels, dtype=torch.long).cuda()
     # set batch size to 16, then do non-adaptive attack
     bs_ = 4
+    robust_err_total_source = 0
+    robust_err_total_target = 0
     for i in range(0, len(saved_adv_images), bs_):
         X = saved_adv_images[i:i+bs_]
         y_batch = y[i:i+bs_]
         err_natural, err_robust, X_pgd = _pgd_attack(model_target, X, y_batch, num_steps=pgd_steps, num_eot=4)
+        robust_err_total_source += err_robust
+        natural_err_total += err_natural
         saved_adv_images_np_cp[indices[i:i+bs_]] = X_pgd.cpu().detach().numpy()
-        print(f"Nat Err: {err_natural} | Rob Err: {err_robust} | Total: {bs_} \n")
+        print(f"Nat Err: {natural_err_total} | Rob Err: {robust_err_total_source} | Total: {(i+1)*bs_}")
 
     # evaluate the model for 10 times, then report the average accuracy and std
     mean_acc = []
