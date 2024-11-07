@@ -181,11 +181,11 @@ def get_args():
     parser.add_argument('--steps', default=20, type=int, help='number of steps')
     parser.add_argument('--eot', default=1, type=int, help='number of eot')
     # save_path
-    parser.add_argument('--save_path', default="/data/projects/ensem_adv/ckpts_test_noseed", type=str, help='save path')
+    parser.add_argument('--save_path', default="ckpts/", type=str, help='save path')
     # parser.add_argument('--save_path', default="/data/projects/ensem_adv/ckpts_test", type=str, help='save path')
     parser.add_argument('--img_path', default="./imgs", type=str, help='save path for images')
     # data_dir
-    parser.add_argument('--data_dir', default="/local/home/jiezha/data/", type=str, help='data directory')
+    parser.add_argument('--data_dir', default="data/", type=str, help='data directory')
     # resolution
     parser.add_argument('--resolutions', default=[32,16,8,4], type=list, help='resolution')
     # dataset, cifar10 or cifar100
@@ -310,8 +310,8 @@ def main():
         print(f"Self-ensemble test acc = {self_ensemble_test_acc}")
         print("\n---------------------------------------------\n")
 
-    # test_per_layer()
-    # test_ensemble()
+    test_per_layer()
+    test_ensemble()
     
     # 5. Evaluate the robustness of the model under PGD attack, non-adaptive attack
     # non_adaptive_attack(model, args=args, targetd_attack=True)
@@ -324,7 +324,7 @@ def main():
     # import pdb; pdb.set_trace()
     
     # 7. Evaluate the robustness of the model under AutoAttack
-    if False:
+    if True:
         with isolated_environment():
             time_start = time.time()
             benchmark(
@@ -350,8 +350,3 @@ if __name__ == '__main__':
     # setup_seed(1)
     main()
 
-"""
-CUDA_VISIBLE_DEVICES=7 python main.py --bs=8 --steps=200 --eot=8 --dataset cifar10 --save_path=/data/projects/ensem_adv/ckpts_cifar10
-
-
-"""
