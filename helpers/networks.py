@@ -145,16 +145,9 @@ class TargetModel(nn.Module):
         """Main forward pass, combining multiple layer predictions."""
         all_logits = self.predict_from_several_layers(x, [l - 1 for l in [0, 1, 5, 10, 20, 30, 35, 40, 45, 50, 52][1:]])
         # Add prediction from the backbone model itself
-        x_ = self.prepare_input(x)
-        # import pdb; pdb.set_trace()
-        # self.imported_model.double()  
-        # x_ = x_.double()                
+        x_ = self.prepare_input(x)              
         all_logits[54] = self.imported_model(x_)
-        # self.imported_model.float()
-        #! now all_logits matchs, but stack_logits is not
         stack_logits = torch.stack([all_logits[l] for l in [20, 30, 35, 40, 45, 50, 52, 54]], dim=1)
-        # print("sum:", [all_logits[l][0].sum().item() for l in [20, 30, 35, 40, 45, 50, 52, 54]])
-        # import pdb; pdb.set_trace()
         # Normalize and extract logits
         stack_logits = stack_logits - torch.max(stack_logits, dim=2, keepdim=True).values
         stack_logits = stack_logits - torch.max(stack_logits, dim=1, keepdim=True).values
@@ -174,12 +167,25 @@ class TargetModel(nn.Module):
         x = self.imported_model(x)
         return x
 
+    def get_logits_from_several_layers(self, x, layers=52):
+
+        all_logits = self.predict_from_several_layers(x, [l - 1 for l in [0, 1, 5, 10, 20, 30, 35, 40, 45, 50, 52][1:]])
+        # Add prediction from the backbone model itself
+        all_logits[54] = self.imported_model(self.prepare_input(x))
+
+        # Stack logits from specific layers, [20,30,35,40,45,50,52]
+        all_logits = torch.stack([all_logits[l] for l in [20, 30, 35, 40, 45, 50, 52, 54]], dim=1)
+        
+        return torch.mean(all_logits, dim=1)
+    
 
 class SourceModel(TargetModel):
     def __init__(self, imported_model, multichannel_fn, classes=10, resolutions=[32, 16, 8, 4]):
         super(SourceModel, self).__init__(imported_model, multichannel_fn, classes, resolutions)
         # self.fix_seed = True
         
+
+    
     def get_logits_from_layer(self, x, l):
         """Predict from a specific layer."""
         x = self.forward_until(x, l)
@@ -195,7 +201,6 @@ class SourceModel(TargetModel):
         # Stack logits from specific layers, [20,30,35,40,45,50,52]
         all_logits = torch.stack([all_logits[l] for l in [20, 30, 35, 40, 45, 50, 52, 54]], dim=1)
         
-
         return torch.mean(all_logits, dim=1)
     
     def forward(self, x):

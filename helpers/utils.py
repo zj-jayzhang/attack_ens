@@ -258,7 +258,105 @@ def apply_transformations(
   return images
 
 
+# def apply_transformations_new(
+#     images,
+#     down_res = 224,
+#     up_res = 224,
+#     jit_x = 0,
+#     jit_y = 0,
+#     down_noise = 0.0,
+#     up_noise = 0.0,
+#     contrast = 1.0,
+#     color_amount = 1.0,
+#     ):
 
+#   # # for MNIST alone
+#   # images = torch.mean(images,axis=1,keepdims=True)
+
+#     images_collected = []
+
+#     for i in range(images.shape[0]):
+
+#         image = images[i]
+
+#         # changing contrast
+#         image = torchvision.transforms.functional.adjust_contrast(image, contrast[i])
+
+#         # shift the result in x and y
+#         image = torch.roll(image,shifts=(jit_x[i], jit_y[i]),dims=(-2,-1))
+
+#         # shifting in the color <-> grayscale axis
+#         image = color_amount[i]*image + torch.mean(image,axis=0,keepdims=True)*(1-color_amount[i])
+
+#         images_collected.append(image)
+
+#     images = torch.stack(images_collected, axis=0)
+#     noise_small = custom_rand(images, (images.shape[0], 3, down_res, down_res)).to("cuda") * down_noise
+#     noise_large = F.interpolate(noise_small, size=(up_res, up_res), mode='bicubic')
+#     images = images + noise_large
+
+# #   descrease the resolution
+# #   images = F.interpolate(images, size=(down_res,down_res), mode='bicubic')
+
+# #   # low res noise
+# #   noise = down_noise * custom_rand(images+312, (images.shape[0],3,down_res,down_res)).to("cuda")
+# #   images = images + noise
+
+# #   # increase the resolution
+# #   images = F.interpolate(images, size=(up_res,up_res), mode='bicubic')
+
+# #   # high res noise
+# #   noise = up_noise * custom_rand(images+812,(images.shape[0],3,up_res,up_res)).to("cuda")
+# #   images = images + noise
+
+# #   # clipping to the right range of values
+#     images = torch.clip(images,0,1)
+
+#     return images
+
+
+# def make_multichannel_input_new(images: torch.Tensor,
+#                             up_res: int = 32,
+#                             resolutions: Sequence[int] = [32, 16, 8, 4],
+#                             jit_size: int = 3,
+#                             down_noise: float = 0.2,
+#                             up_noise: float = 0.2,
+#                             shuffle_image_versions_randomly: bool = False,
+#                             ):
+#   all_channels = []
+
+#   for i,r in enumerate(resolutions):
+
+#     down_res = r
+
+#     jits_x = custom_choices(range(-jit_size,jit_size+1), images+i) # x-shift
+#     jits_y = custom_choices(range(-jit_size,jit_size+1), 51*images+7*i+125*r) # y-shift
+#     contrasts = custom_choices(np.linspace(0.7,1.5,100), 7+3*images+9*i+5*r) # change in contrast
+#     color_amounts = contrasts = custom_choices(np.linspace(0.5,1.0,100), 5+7*images+8*i+2*r) # change in color amount
+
+#     images_now = apply_transformations_new(
+#       images,
+#       down_res = down_res,
+#       up_res = up_res,
+#       jit_x = jits_x,
+#       jit_y = jits_y,
+#       down_noise = down_noise,
+#       up_noise = up_noise,
+#       contrast = contrasts,
+#       color_amount = color_amounts,
+#       )
+
+#     all_channels.append(images_now)
+
+#   if not shuffle_image_versions_randomly:
+#     return torch.concatenate(all_channels,axis=1)
+#   elif shuffle_image_versions_randomly:
+#     indices = torch.randperm(len(all_channels))
+#     shuffled_tensor_list = [all_channels[i] for i in indices]
+#     return torch.concatenate(shuffled_tensor_list,axis=1)
+
+    
+    
 def make_multichannel_input(images: torch.Tensor,
                             up_res: int = 32,
                             resolutions: Sequence[int] = [32, 16, 8, 4],

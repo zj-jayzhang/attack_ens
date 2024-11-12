@@ -8,6 +8,7 @@ from helpers.networks import SourceModel
 from helpers.utils import eval_model, get_dataset, setup_seed
 from torch.autograd import Variable
 import copy
+import torch.nn.functional as F
 from tqdm import tqdm
 from typing import Tuple
 import numpy as np
@@ -19,6 +20,8 @@ from typing import Callable, Optional, Sequence, Tuple, Union
 import argparse
 from autoattack import AutoAttack
 from autoattack.state import EvaluationState
+import matplotlib.pyplot as plt
+
 
 def benchmark(
     model: Union[nn.Module, Sequence[nn.Module]],
@@ -159,6 +162,55 @@ def _pgd_targeted_attack(
     print("predicition:", adv_out.data.max(1)[1], "target:", target_y.data)
     return initial_err, adv_err, X_pgd
 
+def CE_Loss(outputs, labels):
+    loss_func = nn.CrossEntropyLoss(reduction='none')
+    loss = loss_func(outputs, labels)
+    return loss
+
+
+def _plot_per_step_loss_curve(step_loss_map):
+    num_samples = 20
+    
+    # Create subplots: 5 rows and 4 columns
+    fig, axs = plt.subplots(5, 4, figsize=(18, 24), sharex=True)
+    fig.suptitle("Loss per Step for Each Sample in the Batch")
+    
+    # Flatten the axs array for easy iteration
+    axs = axs.flatten()
+    
+    # Prepare step keys and loop through each sample index
+    steps = sorted(step_loss_map.keys())
+    for i in range(num_samples):
+        sample_losses = [-1*step_loss_map[step][i] for step in steps]  # Collect losses for sample `i` across all steps
+        
+        # Plot on the subplot for sample `i`
+        axs[i].plot(steps, sample_losses, label=f'Sample {i+1}')
+        axs[i].set_ylabel("Loss")
+        axs[i].set_title(f"Sample {i+1} Loss per Step")
+        axs[i].legend()
+    
+    # Hide any unused subplots
+    for j in range(num_samples, len(axs)):
+        fig.delaxes(axs[j])
+    
+    axs[-1].set_xlabel("Steps")
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95])  # Adjust layout to make space for the main title
+    plt.savefig("imgs/loss_per_step.png")
+
+    
+    
+
+    
+    
+    
+def CW_Loss(outputs, labels, kappa=0):
+    one_hot_labels = torch.eye(outputs.shape[1]).cuda()[labels]
+    # find the max logit other than the target class
+    other = torch.max((1 - one_hot_labels) * outputs, dim=1)[0]
+    # get the target class's logit
+    real = torch.max(one_hot_labels * outputs, dim=1)[0]
+    loss = torch.clamp((real - other), min=-kappa)
+    return loss.mean()
 
 
 def _pgd_adaptive_attack(
@@ -183,16 +235,32 @@ def _pgd_adaptive_attack(
         random_noise = torch.FloatTensor(*X_pgd.shape).uniform_(-epsilon, epsilon).cuda()
         X_pgd = Variable(X_pgd.data + random_noise, requires_grad=True)
 
+    cw_loss = False
+    step_loss_map = {}
     for _ in range(num_steps):
-        # for i in range(1):
-            # setup_seed(_)
         opt = optim.SGD([X_pgd], lr=1e-3)
         opt.zero_grad()
         with torch.enable_grad():
             loss = 0
             for i in range(num_eot):
                 x_transformed = X_pgd
-                loss += nn.CrossEntropyLoss()(model_source.get_logits_from_several_layers(x_transformed, layer), y)
+                # logits = model_source.forward_original(x_transformed)
+                logits = model_source.get_logits_from_several_layers(x_transformed, layer)
+                
+                if cw_loss:
+                    loss += CW_Loss(logits, y)
+                else:
+                    # per_sample loss
+                    per_sample_loss = CE_Loss(logits, y)
+                    step_loss_map[_] = per_sample_loss.cpu().detach().numpy()
+                    loss += per_sample_loss.mean()
+                    # loss += nn.CrossEntropyLoss()(logits, y)
+                
+            # print(f"step {_},  {'cw_loss' if cw_loss else 'ce_loss'}: {loss}")
+            
+                # loss += nn.CrossEntropyLoss()(logits, y)
+                # import pdb; pdb.set_trace()
+                # loss += nn.CrossEntropyLoss()(model_source.get_logits_from_several_layers(x_transformed, layer), y)
                 # loss += nn.CrossEntropyLoss()(model_source.forward_original(x_transformed), y)
             loss /= num_eot
                 
@@ -203,11 +271,75 @@ def _pgd_adaptive_attack(
         X_pgd = Variable(X.data + eta, requires_grad=True)
         X_pgd = Variable(torch.clamp(X_pgd, 0, 1.0), requires_grad=True)
         
+    # _plot_per_step_loss_curve(step_loss_map)
+    # import pdb; pdb.set_trace()
     err_pgd_on_source = (model_source.get_logits_from_several_layers(X_pgd, layer).data.max(1)[1] != y.data).float().sum()
     # err_pgd_on_source = (model_source.forward_original(X_pgd).data.max(1)[1] != y.data).float().sum()
 
     err_pgd_on_target = (model_target(X_pgd).data.max(1)[1] != y.data).float().sum()
     return err, err_pgd_on_source, err_pgd_on_target, X_pgd
+
+
+
+
+def _random_pgd_attack(
+                    model,
+                    X,
+                    y,
+                    epsilon=0.031,
+                    num_steps=20,
+                    step_size=0.003,
+                    random=True,
+                    num_eot=1,
+                    num_restarts=5  # Number of random restarts to improve success rate
+                ):
+    best_err_pgd = None
+    best_X_pgd = None
+
+    # Repeat the PGD attack multiple times to enhance success
+    for _ in range(num_restarts):
+        # Initialize X_pgd as a copy of the original input
+        X_pgd = Variable(X.data, requires_grad=True)
+
+        # Apply random start if required
+        if random:
+            random_noise = torch.FloatTensor(*X_pgd.shape).uniform_(-epsilon, epsilon).cuda()
+            X_pgd = Variable(X_pgd.data + random_noise, requires_grad=True)
+
+        # Perform PGD steps
+        for _ in range(num_steps):
+            opt = optim.SGD([X_pgd], lr=1e-3)
+            opt.zero_grad()
+            loss = 0
+            for i in range(num_eot):
+                x_transformed = X_pgd
+                loss += nn.CrossEntropyLoss()(model(x_transformed), y)
+            loss.backward()
+            
+            # Update perturbation
+            eta = step_size * X_pgd.grad.data.sign()
+            X_pgd = Variable(X_pgd.data + eta, requires_grad=True)
+            
+            # Project the perturbation back to the epsilon-ball
+            eta = torch.clamp(X_pgd.data - X.data, -epsilon, epsilon)
+            X_pgd = Variable(X.data + eta, requires_grad=True)
+            
+            # Clip to [0, 1] to ensure valid image pixel values
+            X_pgd = Variable(torch.clamp(X_pgd, 0, 1.0), requires_grad=True)
+
+        # Evaluate the error after the attack
+        err_pgd = (model(X_pgd).data.max(1)[1] != y.data).float().sum()
+
+        # Track the best attack (highest error)
+        if best_err_pgd is None or err_pgd > best_err_pgd:
+            best_err_pgd = err_pgd
+            best_X_pgd = X_pgd
+
+    # Evaluate the error on the original input
+    out = model(X)
+    err = (out.data.max(1)[1] != y.data).float().sum()
+
+    return err, best_err_pgd, best_X_pgd
 
 
 def _pgd_attack(
@@ -221,6 +353,8 @@ def _pgd_attack(
                 num_eot=1,
                 ):
     
+
+        
     out = model(X)
     
     err = (out.data.max(1)[1] != y.data).float().sum()
@@ -236,8 +370,6 @@ def _pgd_attack(
         for i in range(num_eot):
             x_transformed = X_pgd
             loss += nn.CrossEntropyLoss()(model(x_transformed), y)
-        # with torch.enable_grad():
-        #     loss = nn.CrossEntropyLoss()(model(X_pgd), y)
         loss.backward()
         eta = step_size * X_pgd.grad.data.sign()
         X_pgd = Variable(X_pgd.data + eta, requires_grad=True)
@@ -245,6 +377,7 @@ def _pgd_attack(
         X_pgd = Variable(X.data + eta, requires_grad=True)
         X_pgd = Variable(torch.clamp(X_pgd, 0, 1.0), requires_grad=True)
     err_pgd = (model(X_pgd).data.max(1)[1] != y.data).float().sum()
+    
     
     return err, err_pgd, X_pgd
 
@@ -281,17 +414,17 @@ def non_adaptive_attack(model, args, targetd_attack=False):
         
         if total >= args.num_test:
             break
-    # visualize the last batch of images
-    # visualize_adv_images(X, y, X_pgd, model, description="non-adpt")
-    
+
     print(f"clean accuracy: {(1 - natural_err_total / total):.2%}, robust accuracy: {(1 - robust_err_total / total):.2%}")
 
 
-def adaptive_attack(model_target, args):
+def adaptive_attack_old(model_target, args):
     """
     evaluate model by our adaptive attack
     """
     _, images_test_np, _, labels_test_np, test_loader = get_dataset(args.data_dir, classes=args.classes, batch_size=args.bs)
+    # make_multichannel_input_new
+    # model_source = SourceModel(copy.deepcopy(model_target.imported_model), make_multichannel_input_new, classes=args.classes).to("cuda")
 
     model_source = SourceModel(copy.deepcopy(model_target.imported_model), model_target.multichannel_fn, classes=args.classes).to("cuda")
     model_source.layer_operations = copy.deepcopy(model_target.layer_operations)
@@ -320,6 +453,7 @@ def adaptive_attack(model_target, args):
     saved_adv_images = []
     true_labels = []
     if not os.path.exists(f"saved_adv_images_{args.dataset}.npy"):
+    # if True:
         for data, target in pbar:
             data, target = data.cuda(), target.cuda()
             X, y = Variable(data, requires_grad=True), Variable(target)
@@ -352,40 +486,82 @@ def adaptive_attack(model_target, args):
         true_labels = np.load(f"saved_adv_labels_{args.dataset}.npy")
         true_labels_cp = copy.deepcopy(true_labels)
     #! to avoid overfitting, we pick the samples that are correctly classified by the target model, then do non-adaptive attack again
-    # calculate the robust accuracy of the target model 5 times, pick samples that are correctly classified
-    picked_indices = []
-    for i in range(5):
-        predict = eval_model(model_target, np.transpose(saved_adv_images_np, (0, 2, 3, 1)), true_labels, forward_fn="ensemble", return_pred=True)
-        picked_indices.append(np.where(predict == true_labels)[0])
-    picked_indices = np.concatenate(picked_indices, axis=0)
-    indices = np.unique(picked_indices)
-    print(f"\n further finetuining with {len(indices)} samples \n") 
-    saved_adv_images_np = saved_adv_images_np[indices]
-    true_labels = true_labels[indices]
-    
-    saved_adv_images = torch.tensor(saved_adv_images_np, dtype=torch.float32).cuda()
-    y = torch.tensor(true_labels, dtype=torch.long).cuda()
-    bs_ = 4
-    natural_err_total = 0
-    robust_err_total_target = 0
-    for i in range(0, len(saved_adv_images), bs_):
-        X = saved_adv_images[i:i+bs_]
-        y_batch = y[i:i+bs_]
-        err_natural, err_robust, X_pgd = _pgd_attack(model_target, X, y_batch, num_steps=pgd_steps, num_eot=10)
-        robust_err_total_target += err_robust
-        natural_err_total += err_natural
-        saved_adv_images_np_cp[indices[i:i+bs_]] = X_pgd.cpu().detach().numpy()
-        print(f"Nat Err: {natural_err_total} | Rob Err: {robust_err_total_target} | Total: {i+bs_}")
+    if not os.path.exists(f"saved_adv_images_2{args.dataset}.npy"):
+        # calculate the robust accuracy of the target model 5 times, pick samples that are correctly classified
+        picked_indices = []
+        for i in range(5):
+            predict = eval_model(model_target, np.transpose(saved_adv_images_np, (0, 2, 3, 1)), true_labels, forward_fn="ensemble", return_pred=True)
+            picked_indices.append(np.where(predict == true_labels)[0])
+        picked_indices = np.concatenate(picked_indices, axis=0)
+        indices = np.unique(picked_indices)
+        print("picked indices:", indices)
+        print(f"\n further finetuining with {len(indices)} samples \n") 
+        saved_adv_images_np = saved_adv_images_np[indices]
+        true_labels = true_labels[indices]
+        
+        saved_adv_images = torch.tensor(saved_adv_images_np, dtype=torch.float32).cuda()
+        y = torch.tensor(true_labels, dtype=torch.long).cuda()
+        bs_ = 4
+        natural_err_total = 0
+        robust_err_total_target = 0
+        for i in range(0, len(saved_adv_images), bs_):
+            X = saved_adv_images[i:i+bs_]
+            y_batch = y[i:i+bs_]
+            err_natural, err_robust, X_pgd = _pgd_attack(model_target, X, y_batch, num_steps=pgd_steps, num_eot=10)
+            robust_err_total_target += err_robust
+            natural_err_total += err_natural
+            saved_adv_images_np_cp[indices[i:i+bs_]] = X_pgd.cpu().detach().numpy()
+            print(f"Nat Err: {natural_err_total} | Rob Err: {robust_err_total_target} | Total: {i+bs_}")
 
-    # evaluate the model for 10 times, then report the average accuracy and std
-    mean_acc = []
-    for i in range(10):
-        test_hits, test_count, _ = eval_model(model_target, np.transpose(saved_adv_images_np_cp, (0, 2, 3, 1)), true_labels_cp, forward_fn="ensemble")
-        acc = test_hits/test_count
-        mean_acc.append(acc)
-    print(f"robust accuracy on target: {np.mean(mean_acc):.2%} ± {np.std(mean_acc):.2%}")
+        # evaluate the model for 10 times, then report the average accuracy and std
+        mean_acc = []
+        for i in range(10):
+            test_hits, test_count, _ = eval_model(model_target, np.transpose(saved_adv_images_np_cp, (0, 2, 3, 1)), true_labels_cp, forward_fn="ensemble")
+            acc = test_hits/test_count
+            mean_acc.append(acc)
+        print(f"robust accuracy on target: {np.mean(mean_acc):.2%} ± {np.std(mean_acc):.2%}")
+        np.save(f"saved_adv_images_2{args.dataset}.npy", saved_adv_images_np_cp)
+    else:
+        saved_adv_images_np_cp = np.load(f"saved_adv_images_2{args.dataset}.npy")
+        true_labels_cp = np.load(f"saved_adv_labels_{args.dataset}.npy")
+        mean_acc = []
+        for i in range(10):
+            test_hits, test_count, _ = eval_model(model_target, np.transpose(saved_adv_images_np_cp, (0, 2, 3, 1)), true_labels_cp, forward_fn="ensemble")
+            acc = test_hits/test_count
+            mean_acc.append(acc)
+        print(f"robust accuracy on target: {np.mean(mean_acc):.2%} ± {np.std(mean_acc):.2%}")
+    
+    if True:
+        #! do pgd with random start again on failed samples
+        picked_indices = []
+        for i in range(5):
+            predict = eval_model(model_target, np.transpose(saved_adv_images_np_cp, (0, 2, 3, 1)), true_labels_cp, forward_fn="ensemble", return_pred=True)
+            picked_indices.append(np.where(predict == true_labels_cp)[0])
+        picked_indices = np.concatenate(picked_indices, axis=0)
+        indices = np.unique(picked_indices)
+        print("picked indices:", indices)
+        print(f"\n further finetuining with {len(indices)} samples \n")
+        saved_adv_images_np = saved_adv_images_np_cp[indices]
+        true_labels = true_labels_cp[indices]
+        
+        saved_adv_images = torch.tensor(saved_adv_images_np, dtype=torch.float32).cuda()
+        y = torch.tensor(true_labels, dtype=torch.long).cuda()
+        bs_ = 4
+        natural_err_total = 0
+        robust_err_total_target = 0
+        for i in range(0, len(saved_adv_images), bs_):
+            X = saved_adv_images[i:i+bs_]
+            y_batch = y[i:i+bs_]
+            #! _pgd_attack, _random_pgd_attack
+            # err_natural, err_robust, X_pgd = _random_pgd_attack(model_target, X, y_batch, num_steps=pgd_steps, num_eot=10, num_restarts=5)
+            err_natural, err_robust, X_pgd = _pgd_attack(model_target, X, y_batch, num_steps=pgd_steps, num_eot=10)
+            robust_err_total_target += err_robust
+            natural_err_total += err_natural
+            saved_adv_images_np_cp[indices[i:i+bs_]] = X_pgd.cpu().detach().numpy()
+            print(f"Nat Err: {natural_err_total} | Rob Err: {robust_err_total_target} | Total: {i+bs_}")
+        
+    
     np.save(f"{args.dataset}_adv.npy", saved_adv_images_np_cp)
-    # torch.save(model_target, 'model_whole.pth')
     
     adv_imgs = np.load(f"{args.dataset}_adv.npy")
     # test the model again
@@ -395,3 +571,111 @@ def adaptive_attack(model_target, args):
         acc = test_hits/test_count
         mean_acc.append(acc)
     print(f"robust accuracy on target: {np.mean(mean_acc):.2%} ± {np.std(mean_acc):.2%}")
+
+
+def avg_accuracy(model, imgs, labels):
+    mean_acc = []
+    for _ in range(10):
+        test_hits, test_count, _ = eval_model(model, np.transpose(imgs, (0, 2, 3, 1)), labels, forward_fn="ensemble")
+        mean_acc.append(test_hits / test_count)
+    print(f"Robust accuracy on target: {np.mean(mean_acc):.2%} ± {np.std(mean_acc):.2%}")
+
+
+def adaptive_attack(model_target, args):
+    """
+    Evaluate the model by performing an adaptive attack and multiple repeated attacks on failed samples.
+    """
+    # Load data
+    _, images_test_np, _, labels_test_np, test_loader = get_dataset(args.data_dir, classes=args.classes, batch_size=args.bs)
+
+    # Set up source model for transfer attack
+    model_source = SourceModel(copy.deepcopy(model_target.imported_model), model_target.multichannel_fn, classes=args.classes).to("cuda")
+    model_source.layer_operations = copy.deepcopy(model_target.layer_operations)
+    model_source.linear_layers = copy.deepcopy(model_target.linear_layers)
+
+    model_target.eval()
+    model_source.eval()
+
+    # Attack parameters
+    num_eot = args.eot
+    pgd_steps = args.steps
+    saved_adv_images = []
+    true_labels = []
+    args.num_rounds = 10  # Specify num_rounds for max rounds on failed samples
+
+    # Check if initial adversarial samples exist to avoid recalculation
+    if not os.path.exists(f"saved_adv_images_{args.dataset}.npy"):
+        # Initial transfer PGD attack
+        print("Starting initial transfer attack...")
+        for data, target in tqdm(test_loader, ncols=150):
+            data, target = data.cuda(), target.cuda()
+            X, y = Variable(data, requires_grad=True), Variable(target)
+
+            # Transfer attack on source model
+            _, _, err_robust_on_target, X_pgd = _pgd_adaptive_attack(model_target, model_source, X, y, num_eot=num_eot, num_steps=pgd_steps)
+            
+            saved_adv_images.append(X_pgd.cpu().detach().numpy())
+            true_labels.append(y.cpu().detach().numpy())
+            if len(saved_adv_images) * args.bs >= args.num_test:
+                break
+
+        # Save initial adversarial samples and labels
+        saved_adv_images_np = np.concatenate(saved_adv_images, axis=0)
+        true_labels = np.concatenate(true_labels, axis=0)
+        np.save(f"saved_adv_images_{args.dataset}.npy", saved_adv_images_np)
+        np.save(f"saved_adv_labels_{args.dataset}.npy", true_labels)
+    else:
+        # Load saved initial adversarial samples
+        saved_adv_images_np = np.load(f"saved_adv_images_{args.dataset}.npy")
+        true_labels = np.load(f"saved_adv_labels_{args.dataset}.npy")
+        
+    print("After initial transfer attack...")
+    avg_accuracy(model_target, saved_adv_images_np, true_labels)
+    
+    # Multi-round attacks on union of failed samples
+    print("Starting repeated attacks on union of failed samples...")
+    for round_num in range(args.num_rounds):  # Specify num_rounds for max rounds on failed samples
+        print(f"Round {round_num + 1} of repeated attacks...")
+
+        # Identify union of failed samples across 5 evaluations
+        failed_indices_union = set()
+        for _ in range(5):
+            predictions = eval_model(model_target, np.transpose(saved_adv_images_np, (0, 2, 3, 1)), true_labels, forward_fn="ensemble", return_pred=True)
+            failed_indices_union.update(np.where(predictions == true_labels)[0])
+
+        if not failed_indices_union:
+            print("All samples successfully attacked.")
+            break
+        else:
+            print(f"Number of failed samples: {len(failed_indices_union)}")
+
+        # Convert set of failed indices to array for easier indexing
+        failed_indices = np.array(list(failed_indices_union))
+        
+        # Only process failed samples in this round
+        saved_adv_images_failed = torch.tensor(saved_adv_images_np[failed_indices], dtype=torch.float32).cuda()
+        true_labels_failed = torch.tensor(true_labels[failed_indices], dtype=torch.long).cuda()
+
+        # Run PGD attack only on failed samples and update them
+        args.bs = 4  # Batch size for PGD attack on failed samples
+        for i in range(0, len(saved_adv_images_failed), args.bs):
+            X_batch = saved_adv_images_failed[i:i + args.bs]
+            y_batch = true_labels_failed[i:i + args.bs]
+            #! do pgd again on failed samples
+            _, _, X_pgd = _pgd_attack(model_target, X_batch, y_batch, num_steps=pgd_steps, num_eot=1)
+
+            # Update failed samples with new adversarial versions
+            saved_adv_images_np[failed_indices[i:i + args.bs]] = X_pgd.cpu().detach().numpy()
+            
+        avg_accuracy(model_target, saved_adv_images_np, true_labels)
+
+    # Save the final adversarial images after all rounds
+    np.save(f"saved_adv_images_final_{args.dataset}.npy", saved_adv_images_np)
+    
+    
+    saved_adv_images_np = np.load(f"saved_adv_images_final_{args.dataset}.npy")
+    true_labels = labels_test_np[:len(saved_adv_images_np)]
+    
+    # Final evaluation of the adversarial images
+    print("Evaluating final adversarial samples...")
+    avg_accuracy(model_target, saved_adv_images_np, true_labels)

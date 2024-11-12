@@ -181,15 +181,15 @@ def get_args():
     parser.add_argument('--steps', default=20, type=int, help='number of steps')
     parser.add_argument('--eot', default=1, type=int, help='number of eot')
     # save_path
-    parser.add_argument('--save_path', default="ckpts/", type=str, help='save path')
-    # parser.add_argument('--save_path', default="/data/projects/ensem_adv/ckpts_test", type=str, help='save path')
+    # ckpts_test_noseed
+    parser.add_argument('--save_path', default="/data/projects/ensem_adv/ckpts_cifar10", type=str, help='save path')
     parser.add_argument('--img_path', default="./imgs", type=str, help='save path for images')
     # data_dir
-    parser.add_argument('--data_dir', default="data/", type=str, help='data directory')
+    parser.add_argument('--data_dir', default="/local/home/jiezha/data", type=str, help='data directory')
     # resolution
     parser.add_argument('--resolutions', default=[32,16,8,4], type=list, help='resolution')
     # dataset, cifar10 or cifar100
-    parser.add_argument('--dataset', default="cifar100", type=str, choices=["cifar10", "cifar100"], help='dataset')
+    parser.add_argument('--dataset', default="cifar10", type=str, choices=["cifar10", "cifar100"], help='dataset')
     # layers_to_use
     parser.add_argument('--layers_to_use', default=[20,30,35,40,45,50,52], type=list, help='layers to use')
     # epochs_cls
@@ -310,11 +310,11 @@ def main():
         print(f"Self-ensemble test acc = {self_ensemble_test_acc}")
         print("\n---------------------------------------------\n")
 
-    test_per_layer()
-    test_ensemble()
+    # test_per_layer()
+    # test_ensemble()
     
     # 5. Evaluate the robustness of the model under PGD attack, non-adaptive attack
-    # non_adaptive_attack(model, args=args, targetd_attack=True)
+    # non_adaptive_attack(model, args=args, targetd_attack=False)
 
     # 6. Evaluate the robustness of the model under adaptive attack
     adaptive_attack(model, args=args)
@@ -324,7 +324,7 @@ def main():
     # import pdb; pdb.set_trace()
     
     # 7. Evaluate the robustness of the model under AutoAttack
-    if True:
+    if False:
         with isolated_environment():
             time_start = time.time()
             benchmark(
@@ -347,6 +347,14 @@ def main():
 
 if __name__ == '__main__':
     #! for reproducibility
-    # setup_seed(1)
+    setup_seed(3)
     main()
 
+
+"""
+CUDA_VISIBLE_DEVICES=5 python main.py --bs=8 --steps=500 --eot=10 --dataset=cifar100 --save_path /data/projects/ensem_adv/ckpts_test_noseed
+
+CUDA_VISIBLE_DEVICES=5 python main.py --bs=8 --steps=500 --eot=10 --dataset=cifar10
+
+
+"""

@@ -74,6 +74,8 @@ def get_complex_specification_adversaries(
 				# import pdb; pdb.set_trace()
 				logits = model.forward_original(attacked_images[i1:i2])
 				# logits = model(attacked_images[i1:i2])  # much worse images
+				#! test average of logits
+				# logits = model.get_logits_from_several_layers(attacked_images[i1:i2])
 				loss = torch.nn.functional.cross_entropy(logits, soft_targets[i1:i2], reduction="none")
 				batched_losses.append(loss)
 
@@ -90,7 +92,6 @@ def get_complex_specification_adversaries(
 			steps_bar.set_description(f"loss = {overall_loss}")
 		
 		if stop_at_loss is not None and ((overall_loss <= stop_at_loss and flip_loss_sign is False) or (overall_loss >= stop_at_loss and flip_loss_sign is True)):
-			# import pdb; pdb.set_trace()
 			# getting the resulting images
 			if attack_Linfty_limit is None:
 				return image_perturbations.detach().cpu().numpy()
