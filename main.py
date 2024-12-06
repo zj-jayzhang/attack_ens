@@ -314,14 +314,12 @@ def main():
     # test_ensemble()
     
     # 5. Evaluate the robustness of the model under PGD attack, non-adaptive attack
-    # non_adaptive_attack(model, args=args, targetd_attack=False)
+    non_adaptive_attack(model, args=args)
 
+    # torch.save(model, "full_model.pth")
     # 6. Evaluate the robustness of the model under adaptive attack
-    adaptive_attack(model, args=args)
+    # adaptive_attack(model, args=args)
     
-    # save the whole model, not the parameters
-    # torch.save(model, "model_whole.pth")
-    # import pdb; pdb.set_trace()
     
     # 7. Evaluate the robustness of the model under AutoAttack
     if False:
@@ -356,5 +354,36 @@ CUDA_VISIBLE_DEVICES=5 python main.py --bs=8 --steps=500 --eot=10 --dataset=cifa
 
 CUDA_VISIBLE_DEVICES=5 python main.py --bs=8 --steps=500 --eot=10 --dataset=cifar10
 
+
+
+
+
+1. pgd
+CUDA_VISIBLE_DEVICES=1 python main.py --bs=48 --steps=500 --eot=1 --dataset=cifar10
+
+CUDA_VISIBLE_DEVICES=2 python main.py --bs=48 --steps=500 --eot=1 --dataset=cifar100 --save_path /data/projects/ensem_adv/ckpts_test_noseed
+
+2. pgd+transfer
+CUDA_VISIBLE_DEVICES=3 python main.py --bs=48 --steps=500 --eot=1 --dataset=cifar10
+
+CUDA_VISIBLE_DEVICES=4 python main.py --bs=48 --steps=500 --eot=1 --dataset=cifar100 --save_path /data/projects/ensem_adv/ckpts_test_noseed
+
+
+3. eot
+CUDA_VISIBLE_DEVICES=1 python main.py --bs=8 --steps=500 --eot=10 --dataset=cifar10 
+
+CUDA_VISIBLE_DEVICES=2 python main.py --bs=8 --steps=500 --eot=10 --dataset=cifar100 --save_path /data/projects/ensem_adv/ckpts_test_noseed
+
+4. finetune and restart
+CUDA_VISIBLE_DEVICES=3 python main.py --bs=8 --steps=500 --eot=10 --dataset=cifar10 
+
+CUDA_VISIBLE_DEVICES=4 python main.py --bs=8 --steps=500 --eot=10 --dataset=cifar100 --save_path /data/projects/ensem_adv/ckpts_test_noseed
+
+
+
+# for plot per_step loss
+CUDA_VISIBLE_DEVICES=3 python main.py --bs=48 --steps=400 --eot=1 --dataset=cifar100 --save_path /data/projects/ensem_adv/ckpts_test_noseed 
+
+CUDA_VISIBLE_DEVICES=3 python main.py --bs=48 --steps=400 --eot=1 --dataset=cifar100 --save_path /data/projects/ensem_adv/ckpts_test_noseed 
 
 """

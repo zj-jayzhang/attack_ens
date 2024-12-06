@@ -115,33 +115,25 @@ class TargetModel(nn.Module):
         """Predict from a specific layer."""
         x = self.forward_until(x, l)
         x = x.reshape([x.shape[0], -1])
-        # import pdb; pdb.set_trace()
         return self.linear_layers[l](x)
 
     def predict_from_several_layers(self, x, layers):
         """Predict from several layers."""
-        # x = x.double()        
         x = self.prepare_input(x)
         outputs = dict()
-        # self.linear_layers[0] = self.linear_layers[0].double()
         outputs[0] = self.linear_layers[0](x.reshape([x.shape[0], -1]))
-        # self.linear_layers[0] = self.linear_layers[0].float()
         for l in range(len(self.layer_operations)):
             if list(x.shape)[1:] == [2048, 1, 1]:
                 x = x.reshape([-1, 2048])
-            # self.layer_operations[l] = self.layer_operations[l].double()
             x = self.layer_operations[l](x)
-            # self.layer_operations[l] = self.layer_operations[l].float()
             if l in layers:
-                # self.linear_layers[l + 1] = self.linear_layers[l + 1].double()
                 outputs[l + 1] = self.linear_layers[l + 1](x.reshape([x.shape[0], -1]))
-                # self.linear_layers[l + 1] = self.linear_layers[l + 1].float()
                 
 
         
         return outputs
     
-    def forward(self, x):
+    def forward(self, x, return_top3=False):
         """Main forward pass, combining multiple layer predictions."""
         all_logits = self.predict_from_several_layers(x, [l - 1 for l in [0, 1, 5, 10, 20, 30, 35, 40, 45, 50, 52][1:]])
         # Add prediction from the backbone model itself
@@ -153,8 +145,11 @@ class TargetModel(nn.Module):
         stack_logits = stack_logits - torch.max(stack_logits, dim=1, keepdim=True).values
         
         logits = torch.topk(stack_logits, 3, dim=1).values[:, 2]
-        # logits = logits.float()
-        return logits   # [bs, 100]
+        if return_top3:
+            top3_idx = torch.topk(logits, 3, dim=1).indices
+            return logits, top3_idx
+        else:
+            return logits   # [bs, 100]
     
     def forward_original(self, x):
         x = self.multichannel_fn(x)
@@ -163,7 +158,6 @@ class TargetModel(nn.Module):
             mean=[0.485, 0.456, 0.406] * (x.shape[1] // 3),
             std=[0.229, 0.224, 0.225] * (x.shape[1] // 3)
         )(x)
-        # import pdb; pdb.set_trace()
         x = self.imported_model(x)
         return x
 
