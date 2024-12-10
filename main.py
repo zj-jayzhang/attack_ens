@@ -314,11 +314,11 @@ def main():
     # test_ensemble()
     
     # 5. Evaluate the robustness of the model under PGD attack, non-adaptive attack
-    non_adaptive_attack(model, args=args)
+    # non_adaptive_attack(model, args=args)
 
     # torch.save(model, "full_model.pth")
     # 6. Evaluate the robustness of the model under adaptive attack
-    # adaptive_attack(model, args=args)
+    adaptive_attack(model, args=args)
     
     
     # 7. Evaluate the robustness of the model under AutoAttack
